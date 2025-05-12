@@ -1,0 +1,119 @@
+package org.reality.wallet.cli
+
+import cats.syntax.contravariantSemigroupal._
+import cats.syntax.either._
+import cats.syntax.validated._
+
+import org.reality.ext.decline.WithOpts
+import org.reality.ext.decline.decline._
+import org.reality.schema.address.Address
+import org.reality.schema.transaction.{TransactionAmount, TransactionFee}
+
+import com.monovore.decline.Opts
+import com.monovore.decline.refined._
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import fs2.io.file.Path
+import io.estatico.newtype.ops._
+
+object method {
+
+  sealed trait CliMethod
+
+  case class ShowAddress() extends CliMethod
+
+  object ShowAddress extends WithOpts[ShowAddress] {
+
+    val opts = Opts.subcommand("show-address", "Shows address") {
+      Opts(ShowAddress())
+    }
+  }
+
+  case class ShowId() extends CliMethod
+
+  object ShowId extends WithOpts[ShowId] {
+
+    val opts =
+      Opts.subcommand("show-id", "Shows address") {
+        Opts(ShowId())
+      }
+  }
+
+  case class ShowPublicKey() extends CliMethod
+
+  object ShowPublicKey extends WithOpts[ShowPublicKey] {
+
+    val opts = Opts.subcommand("show-public-key", "Shows public key") {
+      Opts(ShowPublicKey())
+    }
+  }
+
+  case class CreateTransaction(
+    destination: Address,
+    fee: TransactionFee,
+    amount: TransactionAmount,
+    prevTxPath: Option[Path],
+    nextTxPath: Path
+  ) extends CliMethod
+
+  object CreateTransaction extends WithOpts[CreateTransaction] {
+
+    val opts: Opts[CreateTransaction] = Opts.subcommand("create-transaction", "Creates transaction") {
+      (
+        Opts.option[Address]("destination", "Destination NET address", "d"),
+        Opts.option[TransactionFee]("fee", "Transaction fee").withDefault(TransactionFee(NonNegLong(0L))),
+        (
+          Opts.option[TransactionAmount]("amount", "Transaction NET amount", "a"),
+          Opts.flag("normalized", "Use to mark that amount is already normalized", "n").orFalse
+        ).tupled.mapValidated {
+          case (amount, normalized) =>
+            if (normalized) amount.validNel
+            else PosLong.from(amount.coerce * 1e8.toLong).map(_.coerce[TransactionAmount]).toValidatedNel
+        },
+        Opts.option[Path]("prevTxPath", "Path to previously created transaction file", "p").orNone,
+        Opts.option[Path]("nextTxPath", "Path where next transaction should be created", "f")
+      ).mapN(CreateTransaction.apply)
+    }
+  }
+
+  case class CreateDeployAppTransaction(
+    destination: Address,
+    appDataPath: Path,
+    appName: String,
+    appVersion: String,
+    appDescription: String,
+    appDownloadURL: String,
+    fee: TransactionFee,
+    amount: TransactionAmount,
+    prevTxPath: Option[Path],
+    nextTxPath: Path
+  ) extends CliMethod
+
+  object CreateDeployAppTransaction extends WithOpts[CreateDeployAppTransaction] {
+
+    val opts: Opts[CreateDeployAppTransaction] = Opts.subcommand("create-deploy-app-transaction", "Creates deploy app transaction") {
+      (
+        Opts.option[Address]("destination", "Destination NET address", "d"),
+        Opts.option[Path]("appDataPath", "Path to data of the application deployment", "data"),
+        Opts.option[String]("appName", "Name of the application", "n"),
+        Opts.option[String]("appVersion", "Version of the application", "v"),
+        Opts.option[String]("appDescription", "Description of the application", "desc"),
+        Opts.option[String]("appDownloadURL", "Download URL of the application", "url"),
+        Opts.option[TransactionFee]("fee", "Transaction fee").withDefault(TransactionFee(NonNegLong(0L))),
+        (
+          Opts.option[TransactionAmount]("amount", "Transaction NET amount", "a"),
+          Opts.flag("normalized", "Use to mark that amount is already normalized", "n").orFalse
+        ).tupled.mapValidated {
+          case (amount, normalized) =>
+            if (normalized) amount.validNel
+            else PosLong.from(amount.coerce * 1e8.toLong).map(_.coerce[TransactionAmount]).toValidatedNel
+        },
+        Opts.option[Path]("prevTxPath", "Path to previously created transaction file", "p").orNone,
+        Opts.option[Path]("nextTxPath", "Path where next transaction should be created", "f")
+      ).mapN(CreateDeployAppTransaction.apply)
+    }
+  }
+
+  val opts: Opts[CliMethod] =
+    ShowAddress.opts.orElse(ShowId.opts).orElse(ShowPublicKey.opts).orElse(CreateTransaction.opts).orElse(CreateDeployAppTransaction.opts)
+}

@@ -1,0 +1,74 @@
+on:
+  push:
+    tags:
+      - 'v*'
+
+name: Create Release
+
+jobs:
+  build:
+    if: startsWith(github.ref, 'refs/tags/')
+    name: Create Release
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Check if project version is release version
+        run:  tr -d '\n' < ./version.sbt  | grep -E "^ThisBuild / version := \"[0-9]{1,}\.[0-9]{1,}\.[0-9]{1,}\"\s*$"
+
+      - name: Build Changelog
+        id: build_changelog
+        uses: mikepenz/release-changelog-builder-action@v2.4.2
+        with:
+          configuration: ".github/config/changelog.json"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: little-core-labs/get-git-tag@v3.0.1
+        id: tagName
+        with:
+          tagRegex: "v(.*)"
+          tagRegexGroup: 1
+
+      - name: Setup Java and scala
+        uses: olafurpg/setup-scala@v13
+        with:
+          java-version: openjdk@1.11.0
+
+      - name: Cache for sbt & coursier ♨️
+        uses: coursier/cache-action@v6
+        id: coursier-cache
+
+      - name: Fetch Dependencies
+        if: steps.coursier-cache.outputs.cache-hit-coursier != 'true'
+        run: sbt +update
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Test and assembly 🚀
+        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test;keytool/assembly;wallet/assembly;core/assembly;dagL1/assembly'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy dependencies
+        run: |
+          cp ./modules/keytool/target/scala-2.13/reality-keytool-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-keytool.jar
+          cp ./modules/wallet/target/scala-2.13/reality-wallet-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-wallet.jar
+          cp ./modules/core/target/scala-2.13/reality-core-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-node.jar
+          cp ./modules/dag-l1/target/scala-2.13/reality-dag-l1-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-dag-l1.jar
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ steps.tagName.outputs.tag }}
+          draft: true
+          prerelease: false
+          body: ${{ steps.build_changelog.outputs.changelog }}
+          files: |
+            ./cl-keytool.jar
+            ./cl-wallet.jar
+            ./cl-node.jar
+            ./cl-dag-l1.jar
+            ./mainnet/mainnet-seedlist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

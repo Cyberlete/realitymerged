@@ -1,0 +1,68 @@
+version: '3.7'
+
+services:
+  genesis:
+    build:
+      context: .
+      dockerfile: local-dev/combined.dockerfile
+    environment:
+      - NODE_COMMAND=run-genesis
+      - NET_L1_COMMAND=run-initial-validator
+    ports:
+      - 9000:9000
+      - 9001:9001
+      - 9002:9002
+      - 9010:9010
+      - 9011:9011
+      - 9012:9012
+    networks:
+      - mynetwork
+
+  validator-0:
+    build:
+      context: .
+      dockerfile: local-dev/combined.dockerfile
+    environment:
+      - NODE_COMMAND=run-validator
+      - NET_L1_COMMAND=run-validator
+      - L0_INITIAL_HOST=genesis
+      - L1_INITIAL_HOST=genesis
+      - L0_PORT_BASIS=2
+      - L1_PORT_BASIS=3
+    depends_on:
+      - genesis
+    ports:
+      - 9020:9020
+      - 9021:9021
+      - 9022:9022
+      - 9030:9030
+      - 9031:9031
+      - 9032:9032
+    networks:
+      - mynetwork
+
+  validator-1:
+    build:
+      context: .
+      dockerfile: local-dev/combined.dockerfile
+    environment:
+      - NODE_COMMAND=run-validator
+      - NET_L1_COMMAND=run-validator
+      - L0_INITIAL_HOST=genesis
+      - L1_INITIAL_HOST=genesis
+      - L0_PORT_BASIS=4
+      - L1_PORT_BASIS=5
+    depends_on:
+      - genesis
+    ports:
+      - 9040:9040
+      - 9041:9041
+      - 9042:9042
+      - 9050:9050
+      - 9051:9051
+      - 9052:9052
+    networks:
+      - mynetwork
+
+networks:
+  mynetwork:

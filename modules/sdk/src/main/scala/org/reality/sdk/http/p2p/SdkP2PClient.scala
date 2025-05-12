@@ -1,0 +1,29 @@
+package org.reality.sdk.http.p2p
+
+import cats.effect.Async
+
+import org.reality.sdk.domain.cluster.services.Session
+import org.reality.sdk.http.p2p.clients.{ClusterClient, NodeClient, SignClient}
+import org.reality.sdk.infrastructure.gossip.p2p.GossipClient
+import org.reality.security.SecurityProvider
+
+import org.http4s.client._
+
+object SdkP2PClient {
+
+  def make[F[_]: Async: SecurityProvider](client: Client[F], session: Session[F]): SdkP2PClient[F] =
+    new SdkP2PClient[F](
+      SignClient.make[F](client),
+      ClusterClient.make[F](client, session),
+      GossipClient.make[F](client, session),
+      NodeClient.make[F](client, session)
+    ) {}
+
+}
+
+sealed abstract class SdkP2PClient[F[_]] private (
+  val sign: SignClient[F],
+  val cluster: ClusterClient[F],
+  val gossip: GossipClient[F],
+  val node: NodeClient[F]
+)
