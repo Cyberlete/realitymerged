@@ -1,0 +1,70 @@
+version: '3.7'
+
+services:
+  combined:
+    build:
+      context: .
+      dockerfile: local-dev/combined.node-api.dockerfile
+    environment:
+      - IPFS_HOST=ipfs-daemon
+    depends_on:
+      - ipfs-daemon
+    ports:
+      - 9000:9000
+      - 9001:9001
+      - 9002:9002
+      - 9010:9010
+      - 9011:9011
+      - 9012:9012
+      - 9100:9100
+    networks:
+      - devnetwork
+  
+  l1-companion-0:
+    build:
+      context: .
+      dockerfile: local-dev/l1.dockerfile
+    environment:
+      - NODE_COMMAND=run-validator
+      - PORT_BASIS=3
+      - L0_INITIAL_HOST=combined
+      - L1_INITIAL_HOST=combined
+    depends_on:
+      - combined
+    ports:
+      - 9030:9030
+      - 9031:9031
+      - 9032:9032
+    networks:
+      - devnetwork
+
+  l1-companion-1:
+    build:
+      context: .
+      dockerfile: local-dev/l1.dockerfile
+    environment:
+      - NODE_COMMAND=run-validator
+      - PORT_BASIS=5
+      - L0_INITIAL_HOST=combined
+      - L1_INITIAL_HOST=combined
+    depends_on:
+      - combined
+    ports:
+      - 9050:9050
+      - 9051:9051
+      - 9052:9052
+    networks:
+      - devnetwork
+    
+  ipfs-daemon:
+    image: 'ipfs/kubo:v0.18.1'
+    ports:
+      - "4001:4001"
+      - "5001:5001"
+    user: "ipfs"
+    command: [ "daemon", "--enable-pubsub-experiment" ]
+    networks:
+      - devnetwork
+
+networks:
+  devnetwork:
