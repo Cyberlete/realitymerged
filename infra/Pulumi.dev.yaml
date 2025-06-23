@@ -1,4 +1,0 @@
-config:
-  reality:digitaloceanToken:
-    secure: AAABAFVTfwPV5QU42yQNsxTJ2ryuoUph2z6syHvw5gNLkovPRVtfRi77oKD8FV/J20cPM+95s8d6fqBIBbH+phgWUqZnj8mpcvDhzFxng9ahgYVOk7jLkQxigz6Jt+CLjrELWhuw9w==
-  reality:environment: dev

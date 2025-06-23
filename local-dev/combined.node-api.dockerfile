@@ -14,7 +14,7 @@ ENV L1_INITIAL_CLI_PORT=9012
 
 WORKDIR /app
 COPY kubernetes/data/ keys/
-COPY modules/combined/target/scala-2.13/reality-combined-assembly-0.0.0+1036-30bff128+20250505-1208.jar combined.jar
+COPY modules/combined/target/scala-2.13/cyberApp-assembly-0.1.0-SNAPSHOT.jar combined.jar
 
 RUN cat <<EOF > start.sh
 
