@@ -4,6 +4,8 @@
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/cyberApp.iml" filepath="$PROJECT_DIR$/.idea/modules/cyberApp.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/cyberApp.cyberApp-build.iml" filepath="$PROJECT_DIR$/.idea/modules/cyberApp.cyberApp-build.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/realitymerged/cyberApp.main.iml" filepath="$PROJECT_DIR$/.idea/modules/realitymerged/cyberApp.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/realitymerged/cyberApp.test.iml" filepath="$PROJECT_DIR$/.idea/modules/realitymerged/cyberApp.test.iml" />
     </modules>
   </component>
 </project>

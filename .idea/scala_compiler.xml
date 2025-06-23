@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ScalaCompilerConfiguration">
-    <profile name="sbt 1" modules="realitymerged_2853" />
-    <profile name="sbt 2" modules="cyberApp">
+    <option name="separateProdTestSources" value="true" />
+    <profile name="sbt 1" modules="cyberApp,realitymerged_2853" />
+    <profile name="sbt 2" modules="cyberApp.main,cyberApp.test">
       <option name="implicitConversions" value="true" />
       <option name="higherKinds" value="true" />
       <option name="existentials" value="true" />
