@@ -197,16 +197,16 @@ object WasmExecutorCellObj extends StateChannelCell {
             val blockHash = computeBlockHash(currentBlockHeight, orderedProofs, timestamp)
 
             // Compute proofs hash
-            val proofsHashValue = computeProofsHash(orderedProofs)
+//            val proofsHashValue = computeProofsHash(orderedProofs)
 
             // Create block wrapper
-            val block = ProofBlockWrapper(
-              height = currentBlockHeight,
-              hash = blockHash,
-              proofs = orderedProofs.map(_.toBlockConsensusProofData),
-              timestamp = timestamp,
-              proofsHash = ProofsHash(proofsHashValue.value)
-            )
+//            val block = ProofBlockWrapper(
+//              height = currentBlockHeight,
+//              hash = blockHash,
+//              proofs = orderedProofs.map(_.toBlockConsensusProofData),
+//              timestamp = timestamp,
+//              proofsHash = ProofsHash(proofsHashValue.value)
+//            )
 
             // Enhanced log for proofs
             println(s"""
