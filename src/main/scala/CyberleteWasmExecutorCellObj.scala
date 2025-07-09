@@ -21,7 +21,7 @@ import io.circe.syntax._
 import org.bouncycastle.crypto.digests.SHA256Digest
 import sttp.client3.{HttpURLConnectionBackend, UriContext, basicRequest}
 
-object WasmExecutorCellObj extends StateChannelCell {
+object CyberleteWasmExecutorCellObj extends StateChannelCell {
   implicit val runtime: IORuntime = cats.effect.unsafe.implicits.global
 
   // Extension method to convert Future to F[_]

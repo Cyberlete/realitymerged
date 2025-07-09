@@ -2,7 +2,6 @@ import io.circe.{Decoder, Encoder, Json}
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 
 import java.time.Instant
-//import org.reality.combined.util
 
 // MongoDB Date Models
 case class MongoDate($date: String)

@@ -3,7 +3,6 @@ import java.nio.{ByteBuffer, ByteOrder}
 import cats.effect.IO
 import cats.implicits.toTraverseOps
 import org.reality.combined._
-import org.reality.combined.examples.ZKWasm
 import org.reality.dag.l1.WasmExecutionParams
 
 
@@ -13,8 +12,7 @@ import org.reality.combined.examples.CombinedL0
 import io.circe.{Decoder, Json}
 import io.github.kawamuray.wasmtime.Val
 
-
-object MovementAnalysisExample extends Portal with ZKWasm {
+object MovementAnalysisExample extends Portal {
   import CoCell._
 
   // Match the incoming JSON structure
@@ -119,7 +117,7 @@ object MovementAnalysisExample extends Portal with ZKWasm {
       case Left(error)      => Left(error)
     }
 
-  override def generateProof(
+  def generateProof(
                               name: String,
                               publicInputs: List[(String, Any)],
                               privateInputs: List[(String, Any)]
