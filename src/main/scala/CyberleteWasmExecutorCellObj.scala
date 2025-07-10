@@ -4,6 +4,7 @@ import cats.effect.std.Random
 import cats.effect.unsafe.IORuntime
 import cats.effect.{Async, IO}
 import cats.syntax.all._
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -19,7 +20,13 @@ import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import io.circe.Json
 import io.circe.syntax._
 import org.bouncycastle.crypto.digests.SHA256Digest
+import org.reality.ext.crypto.RefinedHashableF
+import org.reality.schema.transaction.{RAppStarkHashTransaction, TransactionAmount, TransactionFee, TransactionReference, TransactionSalt}
 import sttp.client3.{HttpURLConnectionBackend, UriContext, basicRequest}
+import org.reality.security.Hashed
+import org.reality.security.hash.Hash
+import org.reality.security.signature.Signed
+import org.reality.ext.crypto._
 
 object CyberleteWasmExecutorCellObj extends StateChannelCell {
   implicit val runtime: IORuntime = cats.effect.unsafe.implicits.global
@@ -436,6 +443,14 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                             println(s"[WASM Executor] Block created with CRYPTO security at height $currentBlockHeight")
                           }
                         }
+
+                        address <- ctx.selfId.toAddress
+                        rAppTx: RAppStarkHashTransaction = RAppStarkHashTransaction(address, address, "", "",
+                          TransactionFee(NonNegLong.MinValue), TransactionAmount(PosLong(1L)), TransactionReference.empty,
+                          TransactionSalt(1L))
+                        signedRAppTx <- rAppTx.sign(ctx.keyPair)
+                        hashedSignedRAppTx <- signedRAppTx.toHashed
+                        _ <- ctx.transactionStorage.put(hashedSignedRAppTx)
 
                         finalResult <- F.pure(Right(NullTerminal): Either[CellError, Ω])
                       } yield finalResult
