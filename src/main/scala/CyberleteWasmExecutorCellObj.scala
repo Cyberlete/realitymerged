@@ -15,19 +15,14 @@ import org.reality.dag.l1.domain.consensus.block.{AlgebraCommand, BlockConsensus
 import org.reality.kernel.Cell.NullTerminal
 import org.reality.kernel.{Cell, CellError, Done, More, StackF, Ω}
 import org.reality.security.SecurityProvider
-import org.reality.security.hash.{Hash, ProofsHash}
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import io.circe.Json
 import io.circe.syntax._
 import org.bouncycastle.crypto.digests.SHA256Digest
-import org.reality.ext.crypto.RefinedHashableF
 import org.reality.schema.transaction.{RAppStarkHashTransaction, TransactionAmount, TransactionFee, TransactionReference, TransactionSalt}
 import sttp.client3.{HttpURLConnectionBackend, UriContext, basicRequest}
-import org.reality.security.Hashed
-import org.reality.security.hash.Hash
-import org.reality.security.signature.Signed
+import org.reality.security.hash.{Hash, ProofsHash}
 import org.reality.ext.crypto._
-
 object CyberleteWasmExecutorCellObj extends StateChannelCell {
   implicit val runtime: IORuntime = cats.effect.unsafe.implicits.global
 
@@ -514,7 +509,7 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
     }
 
   // Calculate hash of all proofs in a block with explicit steps
-  private def computeProofsHash(proofs: List[ProofData]): Hash = {
+  def computeProofsHash(proofs: List[ProofData]): Hash = {
     // Create new digest instance
     val digest = new SHA256Digest()
 
