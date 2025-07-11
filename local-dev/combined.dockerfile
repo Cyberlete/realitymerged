@@ -19,7 +19,7 @@ ENV LOCALHOST=0.0.0.0
 WORKDIR /app
 
 COPY kubernetes/data/ keys/
-COPY modules/combined/target/scala-2.13/reality-combined-assembly-0.0.0+1036-30bff128+20250505-1208.jar combined.jar
+COPY modules/combined/target/scala-2.13/cyberApp-assembly-0.1.0-SNAPSHOT.jar combined.jar
 #reality-combined-assembly-0.0.0+1036-30bff128+20250505-1208.jar
 RUN cat <<EOF > start.sh
 
@@ -56,7 +56,8 @@ then
     --l1--l0-peer-id \$L0_INITIAL_ID \\
     --l1--l0-peer-host \$LOCALHOST \\
     --l1--l0-peer-port \$L0_INITIAL_PUBLIC_PORT \\
-    --l1--collateral 0
+    --l1--collateral 0 \\
+    --l1--aci-db-path aci
 else
     l0_public_port=\$((9000 + \$L0_PORT_BASIS * 10))
     l0_p2p_port=\$((9001 + \$L0_PORT_BASIS * 10))
@@ -94,7 +95,8 @@ else
         --l1--l0-peer-id \$L0_INITIAL_ID \\
         --l1--l0-peer-host \$L0_INITIAL_HOST \\
         --l1--l0-peer-port \$L0_INITIAL_PUBLIC_PORT \\
-        --l1--collateral 0
+        --l1--collateral 0 \\
+        --l1--aci-db-path aci
 fi
 EOF
 

@@ -20,8 +20,8 @@ RUN apk --no-cache add curl
 COPY peers/write-and-join.sh write-and-join.sh
 COPY kubernetes/data/ keys/
 COPY kubernetes/await.sh await.sh
-# COPY modules/dag-l1/target/scala-2.13/reality-dag-l1-assembly-${BUILD_VERSION}-SNAPSHOT.jar l1.jar
-COPY modules/combined/target/scala-2.13/reality-combined-assembly-0.0.0+1036-30bff128+20250505-1208.jar combined.jar
+
+COPY modules/combined/target/scala-2.13/cyberApp-assembly-0.1.0-SNAPSHOT.jar combined.jar
 
 RUN cat <<EOF > start.sh
 
@@ -36,13 +36,13 @@ if [ "\$NODE_COMMAND" = "run-initial-validator" ]
 then
     export CL_KEYSTORE=keys/l1-initial-validator-key.p12
     ./await.sh \$L0_INITIAL_HOST \$L0_INITIAL_PUBLIC_PORT && \
-    java -jar combined.jar run-initial-validator --ip \$DOCKER_HOST --public-port \$public_port --p2p-port \$p2p_port --cli-port \$cli_port --l0-peer-id \$L0_INITIAL_ID --l0-peer-host \$L0_INITIAL_HOST --l0-peer-port \$L0_INITIAL_PUBLIC_PORT --collateral 0
+    java -jar combined.jar run-initial-validator --ip \$DOCKER_HOST --public-port \$public_port --p2p-port \$p2p_port --cli-port \$cli_port --l0-peer-id \$L0_INITIAL_ID --l0-peer-host \$L0_INITIAL_HOST --l0-peer-port \$L0_INITIAL_PUBLIC_PORT --collateral 0 --aci-db-path /Users/brianobeirne/reality
 else
     export CL_KEYSTORE=keys/genesis-keys/key-\$PORT_BASIS.p12
     ./await.sh \$L0_INITIAL_HOST \$L0_INITIAL_PUBLIC_PORT && \
         (
             ./write-and-join.sh \$L1_INITIAL_ID \$L1_INITIAL_HOST \$L1_INITIAL_PUBLIC_PORT \$L1_INITIAL_P2P_PORT \$LOCALHOST \$public_port \$cli_port &
-            java -jar combined.jar run-validator --ip \$DOCKER_HOST --public-port \$public_port --p2p-port \$p2p_port --cli-port \$cli_port --l0-peer-id \$L0_INITIAL_ID --l0-peer-host \$L0_INITIAL_HOST --l0-peer-port \$L0_INITIAL_PUBLIC_PORT --collateral 0
+            java -jar combined.jar run-validator --ip \$DOCKER_HOST --public-port \$public_port --p2p-port \$p2p_port --cli-port \$cli_port --l0-peer-id \$L0_INITIAL_ID --l0-peer-host \$L0_INITIAL_HOST --l0-peer-port \$L0_INITIAL_PUBLIC_PORT --collateral 0 --aci-db-path /Users/brianobeirne/reality
         )
 fi
 EOF

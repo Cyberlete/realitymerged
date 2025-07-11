@@ -1,7 +1,0 @@
-name: reality
-runtime: nodejs
-description: reality infra
-config:
-  pulumi:tags:
-    value:
-      pulumi:template: https://www.pulumi.com/ai/api/project/e796b7af-6fa9-40d6-a53c-efc773e89f48.zip

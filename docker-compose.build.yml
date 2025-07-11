@@ -7,6 +7,6 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
     restart: always
     volumes:
-      - ".:/reality"
-    working_dir: /reality
+      - ".:/realitymerged"
+    working_dir: /realitymerged
     command: tail -f /dev/null;
