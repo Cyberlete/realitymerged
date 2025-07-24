@@ -13,6 +13,6 @@ lazy val root = (project in file("."))
 //      Libraries.circeShapes,
 //      Libraries.circeFs2
     ),
-    Compile / mainClass := Some("org.realitymerged.MovementAnalysisExample")
+    Compile / mainClass := Some("MovementAnalysisExample")
   )
 

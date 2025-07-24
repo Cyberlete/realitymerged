@@ -1,4 +1,3 @@
-import java.nio.file.{Files, Path, Paths}
 import java.nio.{ByteBuffer, ByteOrder}
 import cats.effect.IO
 import cats.implicits.toTraverseOps
@@ -46,7 +45,7 @@ object MovementAnalysisExample extends Portal {
   }
 
   val wasmProgram: WasmExecutionParams[MovementParams, MovementAnalysis] = WasmExecutionParams(
-    wasmPath = "/app/wasm/movement.wasm",
+    wasmPath = "movement.wasm",
     functionName = "exported_analyze_points_wasm",
     paramsConverter = { params: MovementParams =>
       val eventCount = params.events.length
@@ -93,34 +92,34 @@ object MovementAnalysisExample extends Portal {
       coCellsInContext <- mergedCells.map(_.setup(args)).sequence
     } yield coCellsInContext
 
-  protected val wasmExecutor = new RealZKWasmExecutor[IO]
+  //protected val wasmExecutor = new RealZKWasmExecutor[IO]
 
-  def executeWasmWithProof(params: MovementParams): IO[Either[WasmError, (MovementAnalysis, Option[Path])]] =
-    for {
-      wasmBytes <- IO.delay(Files.readAllBytes(Paths.get(wasmProgram.wasmPath)))
-      result <- wasmExecutor.setup(wasmBytes).use {
-        case (store, instance) =>
-          wasmExecutor.executeFunction(
-            store,
-            instance,
-            wasmProgram.functionName,
-            params,
-            wasmBytes
-          )(wasmProgram.paramsConverter, wasmProgram.resultConverter)
-      }
-    } yield result
+//  def executeWasmWithProof(params: MovementParams): IO[Either[WasmError, (MovementAnalysis, Option[Path])]] =
+//    for {
+//      wasmBytes <- IO.delay(Files.readAllBytes(Paths.get(wasmProgram.wasmPath)))
+//      result <- wasmExecutor.setup(wasmBytes).use {
+//        case (store, instance) =>
+//          wasmExecutor.executeFunction(
+//            store,
+//            instance,
+//            wasmProgram.functionName,
+//            params,
+//            wasmBytes
+//          )(wasmProgram.paramsConverter, wasmProgram.resultConverter)
+//      }
+//    } yield result
 
-  def analyzeWithProof(params: MovementParams): IO[Either[WasmError, (MovementAnalysis, Path)]] =
-    executeWasmWithProof(params).map {
-      case Right((analysis, Some(proofPath))) => Right((analysis, proofPath))
-      case Right((_, None)) => Left(ProofGenerationErrorWasm("Proof was not generated")) // Changed to use ProofGenerationErrorWasm
-      case Left(error)      => Left(error)
-    }
+//  def analyzeWithProof(params: MovementParams): IO[Either[WasmError, (MovementAnalysis, Path)]] =
+//    executeWasmWithProof(params).map {
+//      case Right((analysis, Some(proofPath))) => Right((analysis, proofPath))
+//      case Right((_, None)) => Left(ProofGenerationErrorWasm("Proof was not generated")) // Changed to use ProofGenerationErrorWasm
+//      case Left(error)      => Left(error)
+//    }
 
-  def generateProof(
-                              name: String,
-                              publicInputs: List[(String, Any)],
-                              privateInputs: List[(String, Any)]
-                            ): IO[Either[ZKProofError, Path]] =
-    wasmExecutor.generateProof(name, publicInputs, privateInputs)
+//  def generateProof(
+//                              name: String,
+//                              publicInputs: List[(String, Any)],
+//                              privateInputs: List[(String, Any)]
+//                            ): IO[Either[ZKProofError, Path]] =
+//    wasmExecutor.generateProof(name, publicInputs, privateInputs)
 }
