@@ -126,7 +126,7 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
     S: SecurityProvider[F],
     R: Random[F]
   ): Ω => Cell[F, StackF, Ω, Ω, Either[CellError, Ω]] = {
-    val zkExecutor = new RealZKWasmExecutor[IO]
+    val zkExecutor = zkWasmExecutor
     var currentBlockHeight: Long = 0
     var currentProofs: List[ProofData] = List.empty
 
