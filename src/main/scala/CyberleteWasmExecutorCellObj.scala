@@ -395,7 +395,53 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                         F.delay(println(s"[WASM Executor] ❌ Unexpected error during proof generation: ${proofError.message}"))
                     }
 
+
+                    _ <- F.delay(println("[WASM Executor] Processing WASM output with CRYPTO proofs"))
+
+                    // Process proofs when enough verified proofs are collected
+                    _ <- F.delay {
+                      val verifiedProofCount = currentProofs.count(_.verified)
+                      if (verifiedProofCount >= 10) {
+                        val currentTime = System.currentTimeMillis()
+                        val orderedProofs = currentProofs.filter(_.verified).reverse.take(10)
+                        val newBlockHash = computeBlockHash(currentBlockHeight, orderedProofs, currentTime)
+                        val proofsHashValue = computeProofsHash(orderedProofs)
+
+                        val block = ProofBlockWrapper(
+                          currentBlockHeight,
+                          newBlockHash,
+                          orderedProofs.map(_.toBlockConsensusProofData),
+                          currentTime,
+                          ProofsHash(proofsHashValue.value)
+                        )
+
+                        // Process the block with proofs
+                        println(s"[WASM Executor] Processing block with CRYPTOGRAPHIC proofs: ${block.hash}")
+
+                        // Update state after successful processing
+                        currentBlockHeight += 1
+                        currentProofs = currentProofs.filterNot(p => orderedProofs.contains(p))
+                        println(s"[WASM Executor] Block created with CRYPTO security at height $currentBlockHeight")
+                      }
+                    }
+
+                    address <- ctx.selfId.toAddress
+                    rAppTx: RAppStarkHashTransaction = RAppStarkHashTransaction(address, address, "", "",
+                      TransactionFee(NonNegLong.MinValue), TransactionAmount(PosLong(1L)), TransactionReference.empty,
+                      TransactionSalt(1L))
+                    signedRAppTx <- rAppTx.sign(ctx.keyPair)
+                    hashedSignedRAppTx <- signedRAppTx.toHashed
+                    _ <- ctx.transactionStorage.put(hashedSignedRAppTx)
+                    _ <- F.delay {
+                      println(s"recived rAppTx $rAppTx")
+                      println(s"recived signedRAppTx $signedRAppTx")
+                      println(s"recived hashedSignedRAppTx $signedRAppTx")
+                    }
+
                     finalResult <- F.pure(Right(NullTerminal): Either[CellError, Ω])
+
+
+//                    finalResult <- F.pure(Right(AlgebraCommand.ProcessWasmOutput): Either[CellError, Ω])
                   } yield finalResult
 
                 case _ =>
@@ -446,6 +492,11 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                         signedRAppTx <- rAppTx.sign(ctx.keyPair)
                         hashedSignedRAppTx <- signedRAppTx.toHashed
                         _ <- ctx.transactionStorage.put(hashedSignedRAppTx)
+                        _ <- F.delay {
+                          println(s"recived rAppTx $rAppTx")
+                          println(s"recived signedRAppTx $signedRAppTx")
+                          println(s"recived hashedSignedRAppTx $signedRAppTx")
+                        }
 
                         finalResult <- F.pure(Right(NullTerminal): Either[CellError, Ω])
                       } yield finalResult
