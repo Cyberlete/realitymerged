@@ -23,6 +23,7 @@ import org.reality.combined.WasmExecutorStateChannel
 
 object CyberleteWasmExecutorStateChannel extends MkStateChannel {
   val cellObj: StateChannelCell = CyberleteWasmExecutorCellObj
+  //original L1 BlockConsensusCell
   val wasmProgram: WasmExecutionParams[MovementParams, MovementAnalysis] = WasmExecutionParams(
     wasmPath = "movement.wasm",
     functionName = "exported_analyze_points_wasm",
