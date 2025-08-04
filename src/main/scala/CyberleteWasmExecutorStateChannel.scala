@@ -8,7 +8,7 @@ import cats.implicits._
 import org.reality.dag.l1.domain.consensus.block.StateChannelCell
 import org.reality.dag.l1.http.p2p.L1P2PClient
 import org.reality.dag.l1.modules.{L1HttpApi, L1Programs, L1Queues, L1Services, L1Storages, Validators}
-import org.reality.dag.l1.{ MkStateChannel, StateChannel, WasmExecutionParams}
+import org.reality.dag.l1.{MkStateChannel, StateChannel, WasmExecutionParams}
 import org.reality.modules.{AdditionalRoutes, HttpApi}
 import org.reality.schema.peer.PeerId
 import org.reality.sdk.app.SDK
