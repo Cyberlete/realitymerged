@@ -2,17 +2,19 @@ import cats.effect.std.Random
 import cats.effect.unsafe.IORuntime
 import cats.effect.{Async, IO}
 import cats.syntax.all._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import eu.timepit.refined.types.numeric.NonNegLong
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import io.circe.Json
 import io.circe.syntax._
+import eu.timepit.refined.auto._
 import org.bouncycastle.crypto.digests.SHA256Digest
 import org.reality.combined.{ProofGenerationError, RealZKWasmExecutor, ZKProofError}
 import org.reality.dag.l1.domain.consensus.block.BlockConsensusInput.{ProofBlockWrapper, WasmOutputWrapper, ProofData => BlockConsensusProofData}
-import org.reality.dag.l1.domain.consensus.block.{AlgebraCommand, BlockConsensusCell, BlockConsensusContext, CoalgebraCommand, StateChannelCell}
+import org.reality.dag.l1.domain.consensus.block._
 import org.reality.ext.crypto._
 import org.reality.kernel.Cell.NullTerminal
 import org.reality.kernel._
+import org.reality.schema.address.Address
 import org.reality.schema.transaction._
 import org.reality.security.SecurityProvider
 import org.reality.security.hash.{Hash, ProofsHash}
@@ -429,13 +431,16 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                     }
 
                     address <- ctx.selfId.toAddress
-                    rAppTx: RAppStarkHashTransaction = RAppStarkHashTransaction(address, address, "", "",
-                      TransactionFee(NonNegLong.MinValue), TransactionAmount(PosLong(1L)), TransactionReference.empty,
+                    destination = Address("NET3k3VihUWMjse9LE93jRqZLEuwGd6a5Ypk4zYS")
+                    rAppTx: RAppStarkHashTransaction = RAppStarkHashTransaction(address, destination, "", "",
+                      TransactionFee(NonNegLong.MinValue), TransactionAmount(NonNegLong(1L)), TransactionReference.empty,
                       TransactionSalt(1L))
                     signedRAppTx <- rAppTx.sign(ctx.keyPair)
                     hashedSignedRAppTx <- signedRAppTx.toHashed
+                    validationResult <- ctx.transactionValidator.validate(signedRAppTx)
                     _ <- ctx.transactionStorage.put(hashedSignedRAppTx)
                     _ <- Async[F].delay {
+                      println(s"rAppTx validation result: $validationResult")
                       println(s"recived rAppTx $rAppTx")
                       println(s"recived signedRAppTx $signedRAppTx")
                       println(s"recived hashedSignedRAppTx $signedRAppTx")
@@ -452,60 +457,64 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
               }
             case Done(other) =>
               other match {
-                case Right(AlgebraCommand.NoAction) =>
-                  Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
-
-                case Right(cmd: AlgebraCommand) =>
-                  cmd match {
-                    case AlgebraCommand.ProcessWasmOutput(_) =>
-                      for {
-                        _ <- Async[F].delay(println("[WASM Executor] Processing WASM output with CRYPTO proofs"))
-
-                        // Process proofs when enough verified proofs are collected
-                        _ <- Async[F].delay {
-                          val verifiedProofCount = currentProofs.count(_.verified)
-                          if (verifiedProofCount >= 10) {
-                            val currentTime = System.currentTimeMillis()
-                            val orderedProofs = currentProofs.filter(_.verified).reverse.take(10)
-                            val newBlockHash = computeBlockHash(currentBlockHeight, orderedProofs, currentTime)
-                            val proofsHashValue = computeProofsHash(orderedProofs)
-
-                            val block = ProofBlockWrapper(
-                              currentBlockHeight,
-                              newBlockHash,
-                              orderedProofs.map(_.toBlockConsensusProofData),
-                              currentTime,
-                              ProofsHash(proofsHashValue.value)
-                            )
-
-                            // Process the block with proofs
-                            println(s"[WASM Executor] Processing block with CRYPTOGRAPHIC proofs: ${block.hash}")
-
-                            // Update state after successful processing
-                            currentBlockHeight += 1
-                            currentProofs = currentProofs.filterNot(p => orderedProofs.contains(p))
-                            println(s"[WASM Executor] Block created with CRYPTO security at height $currentBlockHeight")
-                          }
-                        }
-
-                        address <- ctx.selfId.toAddress
-                        rAppTx: RAppStarkHashTransaction = RAppStarkHashTransaction(address, address, "", "",
-                          TransactionFee(NonNegLong.MinValue), TransactionAmount(PosLong(1L)), TransactionReference.empty,
-                          TransactionSalt(1L))
-                        signedRAppTx <- rAppTx.sign(ctx.keyPair)
-                        hashedSignedRAppTx <- signedRAppTx.toHashed
-                        _ <- ctx.transactionStorage.put(hashedSignedRAppTx)
-                        _ <- Async[F].delay {
-                          println(s"recived rAppTx $rAppTx")
-                          println(s"recived signedRAppTx $signedRAppTx")
-                          println(s"recived hashedSignedRAppTx $signedRAppTx")
-                        }
-
-                        finalResult <- Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
-                      } yield finalResult
-
-                    case _ => Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
-                  }
+//                case Right(AlgebraCommand.NoAction) =>
+//                  Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
+//
+//                case Right(cmd: AlgebraCommand) =>
+//                  cmd match {
+//                    case AlgebraCommand.ProcessWasmOutput(_) =>
+//                      for {
+//                        _ <- Async[F].delay(println("[WASM Executor] Processing WASM output with CRYPTO proofs"))
+//
+//                        // Process proofs when enough verified proofs are collected
+//                        _ <- Async[F].delay {
+//                          val verifiedProofCount = currentProofs.count(_.verified)
+//                          if (verifiedProofCount >= 10) {
+//                            val currentTime = System.currentTimeMillis()
+//                            val orderedProofs = currentProofs.filter(_.verified).reverse.take(10)
+//                            val newBlockHash = computeBlockHash(currentBlockHeight, orderedProofs, currentTime)
+//                            val proofsHashValue = computeProofsHash(orderedProofs)
+//
+//                            val block = ProofBlockWrapper(
+//                              currentBlockHeight,
+//                              newBlockHash,
+//                              orderedProofs.map(_.toBlockConsensusProofData),
+//                              currentTime,
+//                              ProofsHash(proofsHashValue.value)
+//                            )
+//
+//                            // Process the block with proofs
+//                            println(s"[WASM Executor] Processing block with CRYPTOGRAPHIC proofs: ${block.hash}")
+//
+//                            // Update state after successful processing
+//                            currentBlockHeight += 1
+//                            currentProofs = currentProofs.filterNot(p => orderedProofs.contains(p))
+//                            println(s"[WASM Executor] Block created with CRYPTO security at height $currentBlockHeight")
+//                          }
+//                        }
+//
+//                        address <- ctx.selfId.toAddress
+//                        rAppTx: RAppStarkHashTransaction = RAppStarkHashTransaction(address, address, "", "",
+//                          TransactionFee(NonNegLong.MinValue), TransactionAmount(NonNegLong(1L)), TransactionReference.empty,
+//                          TransactionSalt(1L))
+//                        signedRAppTx <- rAppTx.sign(ctx.keyPair)
+//                        hashedSignedRAppTx <- signedRAppTx.toHashed
+//
+//                        validationResult <- ctx.transactionValidator.validate(signedRAppTx)
+//
+//                        _ <- ctx.transactionStorage.put(hashedSignedRAppTx) //.onError(_ -> )
+//                        _ <- Async[F].delay {
+//                          println(s"rAppTx validation result: $validationResult")
+//                          println(s"recieved rAppTx $rAppTx")
+//                          println(s"recieved signedRAppTx $signedRAppTx")
+//                          println(s"recieved hashedSignedRAppTx $signedRAppTx")
+//                        }
+//
+//                        finalResult <- Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
+//                      } yield finalResult
+//
+//                    case _ => Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
+//                  }
 
                 case Right(_) =>
                   // Handle any other Right value that's not an AlgebraCommand
