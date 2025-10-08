@@ -16,3 +16,4 @@ lazy val root = (project in file("."))
     Compile / mainClass := Some("MovementAnalysisExample")
   )
 
+scalacOptions -= "-Xfatal-warnings"
