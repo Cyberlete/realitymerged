@@ -15,7 +15,7 @@ import org.reality.sdk.app.SDK
 import org.reality.sdk.cli.CliMethod
 import org.reality.sdk.config.types.AppConfig
 import org.reality.security.SecurityProvider
-import io.circe.generic.auto.exportDecoder
+//import io.circe.generic.auto.exportDecoder
 import io.circe.{Decoder, Json}
 import io.github.kawamuray.wasmtime.Val
 import org.reality.combined.WasmExecutorRoutes
@@ -27,7 +27,7 @@ object CyberleteWasmExecutorStateChannel extends MkStateChannel {
   val wasmProgram: WasmExecutionParams[MovementParams, MovementAnalysis] = WasmExecutionParams(
     wasmPath = "movement.wasm",
     functionName = "exported_analyze_points_wasm",
-    paramsConverter = { params: MovementParams =>
+    paramsConverter = { case params: MovementParams =>
       val eventCount = params.events.length
       val totalSize = eventCount * 32 // 32 bytes per event
 
@@ -60,7 +60,7 @@ object CyberleteWasmExecutorStateChannel extends MkStateChannel {
     },
     paramsDecoder = Decoder[MovementParams]
   )
-  def make[F[_]: Async: SecurityProvider: Random](
+  def make[F[_]: {Async, SecurityProvider, Random}](
                                                    appConfig: AppConfig,
                                                    keyPair: KeyPair,
                                                    p2pClient: L1P2PClient[F],
@@ -71,7 +71,7 @@ object CyberleteWasmExecutorStateChannel extends MkStateChannel {
                                                    storages: L1Storages[F],
                                                    validators: Validators[F],
                                                    mkCell: StateChannelCell
-                                                 ): F[StateChannel[F, _, _]] =
+                                                 ): F[StateChannel[F, ?, ?]] =
     for {
       blockAcceptanceS <- Semaphore(1)
       blockCreationS <- Semaphore(1)

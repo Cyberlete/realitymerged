@@ -1,21 +1,21 @@
 import cats.effect.std.Random
 import cats.effect.unsafe.IORuntime
 import cats.effect.{Async, IO}
-import cats.syntax.all._
-import eu.timepit.refined.types.numeric.NonNegLong
+import cats.syntax.all.*
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import io.circe.Json
-import io.circe.syntax._
-import eu.timepit.refined.auto._
+import io.circe.syntax.*
 import org.bouncycastle.crypto.digests.SHA256Digest
 import org.reality.combined.{ProofGenerationError, RealZKWasmExecutor, ZKProofError}
-import org.reality.dag.l1.domain.consensus.block.BlockConsensusInput.{ProofBlockWrapper, WasmOutputWrapper, ProofData => BlockConsensusProofData}
-import org.reality.dag.l1.domain.consensus.block._
-import org.reality.ext.crypto._
+import org.reality.dag.l1.domain.consensus.block.BlockConsensusInput.{ProofBlockWrapper, WasmOutputWrapper, ProofData as BlockConsensusProofData}
+import org.reality.dag.l1.domain.consensus.block.*
+import org.reality.ext.crypto.*
 import org.reality.kernel.Cell.NullTerminal
-import org.reality.kernel._
+import org.reality.kernel.*
 import org.reality.schema.address.Address
-import org.reality.schema.transaction._
+import org.reality.schema.balance.Amount
+import org.reality.schema.netAddress.NETAddress
+import org.reality.schema.transaction.*
 import org.reality.security.SecurityProvider
 import org.reality.security.hash.{Hash, ProofsHash}
 import sttp.client3.{HttpURLConnectionBackend, UriContext, basicRequest}
@@ -23,7 +23,7 @@ import sttp.client3.{HttpURLConnectionBackend, UriContext, basicRequest}
 import java.net.{ConnectException, SocketTimeoutException}
 import java.nio.file.{Files, Paths}
 import scala.concurrent.Future
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import scala.util.{Failure, Success, Try}
 object CyberleteWasmExecutorCellObj extends StateChannelCell {
   implicit val runtime: IORuntime = cats.effect.unsafe.implicits.global
@@ -340,13 +340,13 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                             .getOrElse(Json.obj()),
                           "transaction" -> Json.obj(
                             "status" -> Json.fromString("completed"),
-                            "txHash" -> Json.fromString(wrapper.output.request.transaction.salt.value.toString),
+                            "txHash" -> Json.fromString(wrapper.output.request.transaction.salt.toString),
                             "timestamp" -> Json.fromLong(System.currentTimeMillis()),
                             "dataHash" -> Json.fromString(wrapper.output.request.data.proofs.head.id.hex.toString)
                           ),
                           "metadata" -> Json.obj(
                             "userId" -> Json.fromString(userId),
-                            "sessionId" -> Json.fromString(wrapper.output.request.transaction.salt.value.toString),
+                            "sessionId" -> Json.fromString(wrapper.output.request.transaction.salt.toString),
                             "gameId" -> Json.fromString(gameId),
                             "timestamp" -> Json.fromLong(System.currentTimeMillis()),
                             "privyId" -> Json.fromString(privyId.getOrElse(""))
@@ -431,9 +431,9 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                     }
 
                     address <- ctx.selfId.toAddress
-                    destination = Address("NET3k3VihUWMjse9LE93jRqZLEuwGd6a5Ypk4zYS")
-                    rAppTx: RAppStarkHashTransaction = RAppStarkHashTransaction(address, destination, "", "",
-                      TransactionFee(NonNegLong.MinValue), TransactionAmount(NonNegLong(1L)), TransactionReference.empty,
+                    destination = Address(NETAddress("NET3k3VihUWMjse9LE93jRqZLEuwGd6a5Ypk4zYS"))
+                    rAppTx : RAppStarkHashTransaction = RAppStarkHashTransaction(address, destination, "", "",
+                      TransactionFee.zero, TransactionAmount(Amount(1L)), TransactionReference.empty,
                       TransactionSalt(1L))
                     signedRAppTx <- rAppTx.sign(ctx.keyPair)
                     hashedSignedRAppTx <- signedRAppTx.toHashed

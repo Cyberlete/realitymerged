@@ -1,15 +1,13 @@
 import java.nio.{ByteBuffer, ByteOrder}
 import cats.effect.IO
 import cats.implicits.toTraverseOps
-import org.reality.combined._
+import org.reality.combined.*
 import org.reality.dag.l1.WasmExecutionParams
-
-
-import io.circe.generic.auto._
+import io.circe.generic.auto.*
 import org.reality.combined.examples.CombinedL0
-
-import io.circe.{Decoder, Json}
+import io.circe.{Decoder, Encoder, Json}
 import io.github.kawamuray.wasmtime.Val
+import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 
 object MovementAnalysisExample extends Portal {
   import CoCell._
@@ -28,6 +26,11 @@ object MovementAnalysisExample extends Portal {
 
   case class MovementParams(events: List[MouseEvent])
 
+  object MovementParams {
+    implicit val encoder: Encoder.AsObject[MovementParams] = deriveEncoder
+    implicit val decoder: Decoder[MovementParams] = deriveDecoder
+  }
+  
   case class MovementAnalysis(
                                totalPoints: Int,
                                lineScore: Float,
@@ -47,7 +50,7 @@ object MovementAnalysisExample extends Portal {
   val wasmProgram: WasmExecutionParams[MovementParams, MovementAnalysis] = WasmExecutionParams(
     wasmPath = "movement.wasm",
     functionName = "exported_analyze_points_wasm",
-    paramsConverter = { params: MovementParams =>
+    paramsConverter = { case params: MovementParams =>
       val eventCount = params.events.length
       val totalSize = eventCount * 32 // 32 bytes per event
 
