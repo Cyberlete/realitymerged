@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1.4
-FROM amazoncorretto:11-alpine
+FROM amazoncorretto:11
 ARG BUILD_VERSION=1.10.0
 
-RUN apk add --no-cache curl
+RUN yum install -y curl
+RUN yum install -y hostname
 
 ENV L0_INITIAL_ID=00b8a56a20fc2e2a0196b8b8f4593ea4f736555506950103eb6fbbe435c0eeb71b32abfe21ae63bb3de8b9afdfa604bfd5837ef61e261611b8a0e5efd92ef1ea
 ENV L0_INITIAL_PUBLIC_PORT=9000
@@ -19,7 +20,8 @@ ENV LOCALHOST=0.0.0.0
 WORKDIR /app
 
 COPY kubernetes/data/ keys/
-COPY modules/combined/target/scala-2.13/cyberApp-assembly-0.1.0-SNAPSHOT.jar combined.jar
+COPY target/scala-2.13/cyberApp-assembly*.jar combined.jar
+COPY movement.wasm movement.wasm
 #reality-combined-assembly-0.0.0+1036-30bff128+20250505-1208.jar
 RUN cat <<EOF > start.sh
 

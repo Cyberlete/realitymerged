@@ -1,28 +1,30 @@
-import java.net.{ConnectException, SocketTimeoutException}
-import java.nio.file.{Files, Paths}
 import cats.effect.std.Random
 import cats.effect.unsafe.IORuntime
 import cats.effect.{Async, IO}
-import cats.syntax.all._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
-
-import scala.concurrent.Future
-import scala.concurrent.duration._
-import scala.util.{Failure, Success, Try}
-import org.reality.combined.{ProofGenerationError, RealZKWasmExecutor, ZKProofError}
-import org.reality.dag.l1.domain.consensus.block.BlockConsensusInput.{ProofBlockWrapper, WasmOutputWrapper, ProofData => BlockConsensusProofData}
-import org.reality.dag.l1.domain.consensus.block.{AlgebraCommand, BlockConsensusContext, CoalgebraCommand, StateChannelCell}
-import org.reality.kernel.Cell.NullTerminal
-import org.reality.kernel.{Cell, CellError, Done, More, StackF, Ω}
-import org.reality.security.SecurityProvider
+import cats.syntax.all.*
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import io.circe.Json
-import io.circe.syntax._
+import io.circe.syntax.*
 import org.bouncycastle.crypto.digests.SHA256Digest
-import org.reality.schema.transaction.{RAppStarkHashTransaction, TransactionAmount, TransactionFee, TransactionReference, TransactionSalt}
-import sttp.client3.{HttpURLConnectionBackend, UriContext, basicRequest}
+import org.reality.combined.{ProofGenerationError, RealZKWasmExecutor, ZKProofError}
+import org.reality.dag.l1.domain.consensus.block.BlockConsensusInput.{ProofBlockWrapper, WasmOutputWrapper, ProofData as BlockConsensusProofData}
+import org.reality.dag.l1.domain.consensus.block.*
+import org.reality.ext.crypto.*
+import org.reality.kernel.Cell.NullTerminal
+import org.reality.kernel.*
+import org.reality.schema.address.Address
+import org.reality.schema.balance.Amount
+import org.reality.schema.netAddress.NETAddress
+import org.reality.schema.transaction.*
+import org.reality.security.SecurityProvider
 import org.reality.security.hash.{Hash, ProofsHash}
-import org.reality.ext.crypto._
+import sttp.client3.{HttpURLConnectionBackend, UriContext, basicRequest}
+
+import java.net.{ConnectException, SocketTimeoutException}
+import java.nio.file.{Files, Paths}
+import scala.concurrent.Future
+import scala.concurrent.duration.*
+import scala.util.{Failure, Success, Try}
 object CyberleteWasmExecutorCellObj extends StateChannelCell {
   implicit val runtime: IORuntime = cats.effect.unsafe.implicits.global
 
@@ -121,12 +123,15 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
     hashObj
   }
 
-  def mkCell[F[_]](ctx: BlockConsensusContext[F])(
-    implicit F: Async[F],
-    S: SecurityProvider[F],
-    R: Random[F]
-  ): Ω => Cell[F, StackF, Ω, Ω, Either[CellError, Ω]] = {
-    val zkExecutor = new RealZKWasmExecutor[IO]
+
+  def mkCell[F[_]: Async: SecurityProvider: Random](ctx: BlockConsensusContext[F]): Ω => Cell[F, StackF, Ω, Ω, Either[CellError, Ω]] = data => {
+    val test: Ω => Cell[F, StackF, Ω, Ω, Either[CellError, Ω]] = BlockConsensusCell.mkCell[F](ctx)
+    val other: Ω => Cell[F, StackF, Ω, Ω, Either[CellError, Ω]] = mkCellCyber[F](ctx)
+    Cell.cellMonoid[F, StackF].combine(test(data), other(data))
+  }
+
+  def mkCellCyber[F[_]: Async: SecurityProvider](ctx: BlockConsensusContext[F]): Ω => Cell[F, StackF, Ω, Ω, Either[CellError, Ω]] = {
+    val zkExecutor = zkWasmExecutor
     var currentBlockHeight: Long = 0
     var currentProofs: List[ProofData] = List.empty
 
@@ -136,10 +141,10 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
 
       for {
         // Log success
-        _ <- F.delay(println(s"[WASM Executor] Proof generated successfully at: $proofPath"))
+        _ <- Async[F].delay(println(s"[WASM Executor] Proof generated successfully at: $proofPath"))
 
         // public inputs extraction with error handling
-        publicInputsResult <- F.delay {
+        publicInputsResult <- Async[F].delay {
           try
             zkWasmExecutor.extractPublicInputsFromMetadata(metadataPath).unsafeRunSync()
           catch {
@@ -150,7 +155,7 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
         }
 
         // verification with cryptographic verification
-        verificationResult <- F.delay {
+        verificationResult <- Async[F].delay {
           try {
             println(s"[WASM Executor] Attempting to verify proof with inputs: $publicInputsResult")
             val result = zkWasmExecutor.verifyProof(Paths.get(proofPath), publicInputsResult).unsafeRunSync()
@@ -166,10 +171,10 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
         }
 
         // Log verification result
-        _ <- F.delay(println(s"[WASM Executor] proof verification result: $verificationResult"))
+        _ <- Async[F].delay(println(s"[WASM Executor] proof verification result: $verificationResult"))
 
         // Create proof info object with verification status
-        proofInfo <- F.delay {
+        proofInfo <- Async[F].delay {
           extractProofInfo(
             proofPath,
             metadataPath,
@@ -179,7 +184,7 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
         }
 
         // Only add verified proofs to the block
-        _ <- F.delay {
+        _ <- Async[F].delay {
           if (verificationResult) {
             currentProofs = proofInfo :: currentProofs
             val verifiedCount = currentProofs.count(_.verified)
@@ -235,9 +240,9 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
     // Helper to send data to validator API
     def sendToValidatorApi(analysisData: Json): F[Unit] =
       if (SKIP_API_CALLS) {
-        F.delay(println(s"[WASM Executor] API calls disabled - skipping validation API call"))
+        Async[F].delay(println(s"[WASM Executor] API calls disabled - skipping validation API call"))
       } else {
-        F.delay {
+        Async[F].delay {
           try {
             println(s"[WASM Executor] Sending data to validator API: $API_ENDPOINT")
             val backend = HttpURLConnectionBackend()
@@ -278,17 +283,17 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
         data,
         scheme.hyloM(
           AlgebraM[F, StackF, Either[CellError, Ω]] {
-            case More(a) => F.pure(a)
+            case More(a) => Async[F].pure(a)
             case Done(Right(cmd: AlgebraCommand)) =>
               cmd match {
                 case AlgebraCommand.ProcessWasmOutput(wrapper) =>
                   for {
-                    _ <- F.delay(println("[WASM Executor] Starting ZK-powered WASM output processing"))
+                    _ <- Async[F].delay(println("[WASM Executor] Starting ZK-powered WASM output processing"))
 
                     // event extraction with logging
                     events = extractEvents(wrapper.output.request.data.asJson)
                     eventCount = events.size
-                    _ <- F.delay(println(s"[WASM Executor] Extracted $eventCount gaming input events for proof"))
+                    _ <- Async[F].delay(println(s"[WASM Executor] Extracted $eventCount gaming input events for proof"))
 
                     privyId = wrapper.output.request.data.asJson.hcursor
                       .downField("value")
@@ -321,10 +326,10 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
 
                     userId = privyId.getOrElse(wrapper.output.request.data.proofs.head.id.hex.toString)
 
-                    _ <- F.delay(println(s"[WASM Executor] Processing proof for user ID: $userId (Game: $gameId)"))
+                    _ <- Async[F].delay(println(s"[WASM Executor] Processing proof for user ID: $userId (Game: $gameId)"))
 
                     // Prepare analysis data for validator API - enhanced for crypto proofs
-                    analysisData <- F.delay(
+                    analysisData <- Async[F].delay(
                       Json.obj(
                         "analysisData" -> Json.obj(
                           "zkProofType" -> Json.fromString("REAL_CRYPTOGRAPHIC_PROOF"),
@@ -335,13 +340,13 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                             .getOrElse(Json.obj()),
                           "transaction" -> Json.obj(
                             "status" -> Json.fromString("completed"),
-                            "txHash" -> Json.fromString(wrapper.output.request.transaction.salt.value.toString),
+                            "txHash" -> Json.fromString(wrapper.output.request.transaction.salt.toString),
                             "timestamp" -> Json.fromLong(System.currentTimeMillis()),
                             "dataHash" -> Json.fromString(wrapper.output.request.data.proofs.head.id.hex.toString)
                           ),
                           "metadata" -> Json.obj(
                             "userId" -> Json.fromString(userId),
-                            "sessionId" -> Json.fromString(wrapper.output.request.transaction.salt.value.toString),
+                            "sessionId" -> Json.fromString(wrapper.output.request.transaction.salt.toString),
                             "gameId" -> Json.fromString(gameId),
                             "timestamp" -> Json.fromLong(System.currentTimeMillis()),
                             "privyId" -> Json.fromString(privyId.getOrElse(""))
@@ -365,13 +370,13 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                     )
 
                     // logging message for proof
-                    _ <- F.delay(
+                    _ <- Async[F].delay(
                       println(
                         s"[WASM Executor] Processing $eventCount gaming input events for proof generation with inputs: $publicInputs"
                       )
                     )
 
-                    proofAttempt <- F.delay {
+                    proofAttempt <- Async[F].delay {
                       Try {
                         println(s"[WASM Executor] Generating proof with AI/ML analysis for gaming input data: $publicInputs")
                         zkExecutor
@@ -386,92 +391,155 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
 
                     _ <- proofAttempt match {
                       case Success(Right(path)) =>
-                        F.delay(println(s"[WASM Executor] ✅ CRYPTO proof generation succeeded at: $path")) *>
+                        Async[F].delay(println(s"[WASM Executor] ✅ CRYPTO proof generation succeeded at: $path")) *>
                           processProof(path.toString)
                       case Success(Left(error: ZKProofError)) =>
-                        F.delay(println(s"[WASM Executor] ❌ CRYPTO ZK proof generation failed: ${error.message}"))
+                        Async[F].delay(println(s"[WASM Executor] ❌ CRYPTO ZK proof generation failed: ${error.message}"))
                       case Failure(exception) =>
                         val proofError = ProofGenerationError(exception.getMessage)
-                        F.delay(println(s"[WASM Executor] ❌ Unexpected error during proof generation: ${proofError.message}"))
+                        Async[F].delay(println(s"[WASM Executor] ❌ Unexpected error during proof generation: ${proofError.message}"))
                     }
 
-                    finalResult <- F.pure(Right(NullTerminal): Either[CellError, Ω])
+
+                    _ <- Async[F].delay(println("[WASM Executor] Processing WASM output with CRYPTO proofs"))
+
+                    // Process proofs when enough verified proofs are collected
+                    _ <- Async[F].delay {
+                      val verifiedProofCount = currentProofs.count(_.verified)
+                      if (verifiedProofCount >= 10) {
+                        val currentTime = System.currentTimeMillis()
+                        val orderedProofs = currentProofs.filter(_.verified).reverse.take(10)
+                        val newBlockHash = computeBlockHash(currentBlockHeight, orderedProofs, currentTime)
+                        val proofsHashValue = computeProofsHash(orderedProofs)
+
+                        val block = ProofBlockWrapper(
+                          currentBlockHeight,
+                          newBlockHash,
+                          orderedProofs.map(_.toBlockConsensusProofData),
+                          currentTime,
+                          ProofsHash(proofsHashValue.value)
+                        )
+
+                        // Process the block with proofs
+                        println(s"[WASM Executor] Processing block with CRYPTOGRAPHIC proofs: ${block.hash}")
+
+                        // Update state after successful processing
+                        currentBlockHeight += 1
+                        currentProofs = currentProofs.filterNot(p => orderedProofs.contains(p))
+                        println(s"[WASM Executor] Block created with CRYPTO security at height $currentBlockHeight")
+                      }
+                    }
+
+                    address <- ctx.selfId.toAddress
+                    destination = Address(NETAddress("NET3k3VihUWMjse9LE93jRqZLEuwGd6a5Ypk4zYS"))
+                    rAppTx : RAppStarkHashTransaction = RAppStarkHashTransaction(address, destination, "", "",
+                      TransactionFee.zero, TransactionAmount(Amount(1L)), TransactionReference.empty,
+                      TransactionSalt(1L))
+                    signedRAppTx <- rAppTx.sign(ctx.keyPair)
+                    hashedSignedRAppTx <- signedRAppTx.toHashed
+                    validationResult <- ctx.transactionValidator.validate(signedRAppTx)
+                    _ <- ctx.transactionStorage.put(hashedSignedRAppTx)
+                    _ <- Async[F].delay {
+                      println(s"rAppTx validation result: $validationResult")
+                      println(s"recived rAppTx $rAppTx")
+                      println(s"recived signedRAppTx $signedRAppTx")
+                      println(s"recived hashedSignedRAppTx $signedRAppTx")
+                    }
+
+                    finalResult <- Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
+
+
+//                    finalResult <- F.pure(Right(AlgebraCommand.ProcessWasmOutput): Either[CellError, Ω])
                   } yield finalResult
 
                 case _ =>
-                  F.pure(Right(NullTerminal): Either[CellError, Ω])
+                  Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
               }
             case Done(other) =>
               other match {
-                case Right(AlgebraCommand.NoAction) =>
-                  F.pure(Right(NullTerminal): Either[CellError, Ω])
-
-                case Right(cmd: AlgebraCommand) =>
-                  cmd match {
-                    case AlgebraCommand.ProcessWasmOutput(_) =>
-                      for {
-                        _ <- F.delay(println("[WASM Executor] Processing WASM output with CRYPTO proofs"))
-
-                        // Process proofs when enough verified proofs are collected
-                        _ <- F.delay {
-                          val verifiedProofCount = currentProofs.count(_.verified)
-                          if (verifiedProofCount >= 10) {
-                            val currentTime = System.currentTimeMillis()
-                            val orderedProofs = currentProofs.filter(_.verified).reverse.take(10)
-                            val newBlockHash = computeBlockHash(currentBlockHeight, orderedProofs, currentTime)
-                            val proofsHashValue = computeProofsHash(orderedProofs)
-
-                            val block = ProofBlockWrapper(
-                              currentBlockHeight,
-                              newBlockHash,
-                              orderedProofs.map(_.toBlockConsensusProofData),
-                              currentTime,
-                              ProofsHash(proofsHashValue.value)
-                            )
-
-                            // Process the block with proofs
-                            println(s"[WASM Executor] Processing block with CRYPTOGRAPHIC proofs: ${block.hash}")
-
-                            // Update state after successful processing
-                            currentBlockHeight += 1
-                            currentProofs = currentProofs.filterNot(p => orderedProofs.contains(p))
-                            println(s"[WASM Executor] Block created with CRYPTO security at height $currentBlockHeight")
-                          }
-                        }
-
-                        address <- ctx.selfId.toAddress
-                        rAppTx: RAppStarkHashTransaction = RAppStarkHashTransaction(address, address, "", "",
-                          TransactionFee(NonNegLong.MinValue), TransactionAmount(PosLong(1L)), TransactionReference.empty,
-                          TransactionSalt(1L))
-                        signedRAppTx <- rAppTx.sign(ctx.keyPair)
-                        hashedSignedRAppTx <- signedRAppTx.toHashed
-                        _ <- ctx.transactionStorage.put(hashedSignedRAppTx)
-
-                        finalResult <- F.pure(Right(NullTerminal): Either[CellError, Ω])
-                      } yield finalResult
-
-                    case _ => F.pure(Right(NullTerminal): Either[CellError, Ω])
-                  }
+//                case Right(AlgebraCommand.NoAction) =>
+//                  Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
+//
+//                case Right(cmd: AlgebraCommand) =>
+//                  cmd match {
+//                    case AlgebraCommand.ProcessWasmOutput(_) =>
+//                      for {
+//                        _ <- Async[F].delay(println("[WASM Executor] Processing WASM output with CRYPTO proofs"))
+//
+//                        // Process proofs when enough verified proofs are collected
+//                        _ <- Async[F].delay {
+//                          val verifiedProofCount = currentProofs.count(_.verified)
+//                          if (verifiedProofCount >= 10) {
+//                            val currentTime = System.currentTimeMillis()
+//                            val orderedProofs = currentProofs.filter(_.verified).reverse.take(10)
+//                            val newBlockHash = computeBlockHash(currentBlockHeight, orderedProofs, currentTime)
+//                            val proofsHashValue = computeProofsHash(orderedProofs)
+//
+//                            val block = ProofBlockWrapper(
+//                              currentBlockHeight,
+//                              newBlockHash,
+//                              orderedProofs.map(_.toBlockConsensusProofData),
+//                              currentTime,
+//                              ProofsHash(proofsHashValue.value)
+//                            )
+//
+//                            // Process the block with proofs
+//                            println(s"[WASM Executor] Processing block with CRYPTOGRAPHIC proofs: ${block.hash}")
+//
+//                            // Update state after successful processing
+//                            currentBlockHeight += 1
+//                            currentProofs = currentProofs.filterNot(p => orderedProofs.contains(p))
+//                            println(s"[WASM Executor] Block created with CRYPTO security at height $currentBlockHeight")
+//                          }
+//                        }
+//
+//                        address <- ctx.selfId.toAddress
+//                        rAppTx: RAppStarkHashTransaction = RAppStarkHashTransaction(address, address, "", "",
+//                          TransactionFee(NonNegLong.MinValue), TransactionAmount(NonNegLong(1L)), TransactionReference.empty,
+//                          TransactionSalt(1L))
+//                        signedRAppTx <- rAppTx.sign(ctx.keyPair)
+//                        hashedSignedRAppTx <- signedRAppTx.toHashed
+//
+//                        validationResult <- ctx.transactionValidator.validate(signedRAppTx)
+//
+//                        _ <- ctx.transactionStorage.put(hashedSignedRAppTx) //.onError(_ -> )
+//                        _ <- Async[F].delay {
+//                          println(s"rAppTx validation result: $validationResult")
+//                          println(s"recieved rAppTx $rAppTx")
+//                          println(s"recieved signedRAppTx $signedRAppTx")
+//                          println(s"recieved hashedSignedRAppTx $signedRAppTx")
+//                        }
+//
+//                        finalResult <- Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
+//                      } yield finalResult
+//
+//                    case _ => Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
+//                  }
 
                 case Right(_) =>
                   // Handle any other Right value that's not an AlgebraCommand
-                  F.pure(Right(NullTerminal): Either[CellError, Ω])
+                  Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
 
                 case Left(error) =>
-                  F.delay(println(s"[WASM Executor] Error during execution: ${error.toString}")) *>
-                    F.pure(Left(error))
+                  Async[F].delay(println(s"[WASM Executor] Error during execution: ${error.toString}")) *>
+                    Async[F].pure(Left(error))
               }
           },
           CoalgebraM[F, StackF, Ω] {
             case CoalgebraCommand.EnqueueWasmOutput(wrapper) =>
-              F.pure(Done(Right(AlgebraCommand.ProcessWasmOutput(wrapper)): Either[CellError, AlgebraCommand]))
-            case _ =>
-              F.pure(Done(Right(AlgebraCommand.NoAction): Either[CellError, AlgebraCommand]))
+              Async[F].pure(Done(Right(AlgebraCommand.ProcessWasmOutput(wrapper)): Either[CellError, AlgebraCommand]))
+            case foo =>
+              println(s"recieved $foo in Cyberlete Cell Obj")
+
+              Async[F].pure(Done(Right(AlgebraCommand.NoAction): Either[CellError, AlgebraCommand]))
           }
         ),
         {
-          case d: WasmOutputWrapper => CoalgebraCommand.EnqueueWasmOutput(d)
-          case _                    => CoalgebraCommand.Empty()
+          case d: WasmOutputWrapper => CoalgebraCommand.EnqueueWasmOutput(d)//todo instead of WasmOutputWrapper match on rAppStarkTransaction?
+          case bar                   =>
+            println(s"recieved $bar in Cyberlete Cell Obj")
+
+            CoalgebraCommand.Empty()
         }
       )
     }
