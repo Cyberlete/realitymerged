@@ -18,7 +18,10 @@ import org.reality.schema.netAddress.NETAddress
 import org.reality.schema.transaction.*
 import org.reality.security.SecurityProvider
 import org.reality.security.hash.{Hash, ProofsHash}
-import sttp.client3.{HttpURLConnectionBackend, UriContext, basicRequest}
+import org.http4s.{Header, Method, Request, Uri}
+import org.http4s.ember.client.EmberClientBuilder
+import org.http4s.circe._
+import org.typelevel.ci.CIString
 
 import java.net.{ConnectException, SocketTimeoutException}
 import java.nio.file.{Files, Paths}
@@ -136,29 +139,17 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
     var currentProofs: List[ProofData] = List.empty
 
     // ENHANCED: Method to verify and process a proof with cryptographic security
-    def processProof(proofPath: String): F[Unit] = {
-      val metadataPath = s"$proofPath.meta"
-
+    // Now accepts publicInputs directly since .zkp format doesn't use separate .meta files
+    def processProof(proofPath: String, publicInputs: List[(String, Any)]): F[Unit] = {
       for {
         // Log success
         _ <- Async[F].delay(println(s"[WASM Executor] Proof generated successfully at: $proofPath"))
 
-        // public inputs extraction with error handling
-        publicInputsResult <- Async[F].delay {
-          try
-            zkWasmExecutor.extractPublicInputsFromMetadata(metadataPath).unsafeRunSync()
-          catch {
-            case e: Exception =>
-              println(s"[WASM Executor] Error extracting public inputs: ${e.getMessage}")
-              List.empty[(String, Any)]
-          }
-        }
-
         // verification with cryptographic verification
         verificationResult <- Async[F].delay {
           try {
-            println(s"[WASM Executor] Attempting to verify proof with inputs: $publicInputsResult")
-            val result = zkWasmExecutor.verifyProof(Paths.get(proofPath), publicInputsResult).unsafeRunSync()
+            println(s"[WASM Executor] Attempting to verify proof with inputs: $publicInputs")
+            val result = zkWasmExecutor.verifyProof(Paths.get(proofPath), publicInputs).unsafeRunSync()
             val isValid = result.isRight && result.exists(identity)
             println(s"[WASM Executor] Raw verification result: $result")
             isValid
@@ -177,7 +168,7 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
         proofInfo <- Async[F].delay {
           extractProofInfo(
             proofPath,
-            metadataPath,
+            proofPath, // No separate metadata file with .zkp format
             System.currentTimeMillis(),
             verified = verificationResult
           )
@@ -242,39 +233,49 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
       if (SKIP_API_CALLS) {
         Async[F].delay(println(s"[WASM Executor] API calls disabled - skipping validation API call"))
       } else {
-        Async[F].delay {
-          try {
-            println(s"[WASM Executor] Sending data to validator API: $API_ENDPOINT")
-            val backend = HttpURLConnectionBackend()
-            val request = basicRequest
-              .post(uri"$API_ENDPOINT")
-              .header("Content-Type", "application/json")
-              .body(analysisData.noSpaces)
-              .readTimeout(CONNECTION_TIMEOUT)
+        Uri.fromString(API_ENDPOINT) match {
+          case Left(parseError) =>
+            Async[F].delay(println(s"[WASM Executor] Invalid API endpoint URI: $parseError"))
+          case Right(uri) =>
+            val request = Request[F](Method.POST, uri)
+              .withEntity(analysisData)
+              .putHeaders(Header.Raw(CIString("Content-Type"), "application/json"))
 
-            val startTime = System.currentTimeMillis()
-            val response = request.send(backend)
-            val endTime = System.currentTimeMillis()
-
-            println(s"[WASM Executor] Response received in ${endTime - startTime}ms, status: ${response.code}")
-            if (response.isSuccess) {
-              println(s"[WASM Executor] Successfully sent data to validator")
-              println(s"[WASM Executor] Response body: ${response.body}")
-            } else {
-              println(s"[WASM Executor] Failed to send data: ${response.statusText}")
-              println(s"[WASM Executor] Error response: ${response.body}")
+            EmberClientBuilder.default[F].build.use { client =>
+              for {
+                startTime <- Async[F].delay(System.currentTimeMillis())
+                response <- client.run(request).use { response =>
+                  for {
+                    body <- response.as[String]
+                    endTime <- Async[F].delay(System.currentTimeMillis())
+                    _ <- Async[F].delay {
+                      println(s"[WASM Executor] Response received in ${endTime - startTime}ms, status: ${response.status.code}")
+                      if (response.status.isSuccess) {
+                        println(s"[WASM Executor] Successfully sent data to validator")
+                        println(s"[WASM Executor] Response body: $body")
+                      } else {
+                        println(s"[WASM Executor] Failed to send data: ${response.status.reason}")
+                        println(s"[WASM Executor] Error response: $body")
+                      }
+                    }
+                  } yield ()
+                }
+              } yield ()
+            }.handleErrorWith { error =>
+              Async[F].delay {
+                error match {
+                  case e: ConnectException =>
+                    println(s"[WASM Executor] CONNECTION ERROR: ${e.getMessage}")
+                    println(s"[WASM Executor] Continuing without validation API")
+                  case e: SocketTimeoutException =>
+                    println(s"[WASM Executor] TIMEOUT ERROR (${CONNECTION_TIMEOUT}): ${e.getMessage}")
+                    println(s"[WASM Executor] Consider checking network or increasing timeout")
+                  case e: Throwable =>
+                    println(s"[WASM Executor] UNEXPECTED ERROR: ${e.getClass.getName}: ${e.getMessage}")
+                    e.printStackTrace()
+                }
+              }
             }
-          } catch {
-            case e: ConnectException =>
-              println(s"[WASM Executor] CONNECTION ERROR: ${e.getMessage}")
-              println(s"[WASM Executor] Continuing without validation API")
-            case e: SocketTimeoutException =>
-              println(s"[WASM Executor] TIMEOUT ERROR (${CONNECTION_TIMEOUT}): ${e.getMessage}")
-              println(s"[WASM Executor] Consider checking network or increasing timeout")
-            case e: Throwable =>
-              println(s"[WASM Executor] UNEXPECTED ERROR: ${e.getClass.getName}: ${e.getMessage}")
-              e.printStackTrace()
-          }
         }
       }
 
@@ -392,7 +393,7 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                     _ <- proofAttempt match {
                       case Success(Right(path)) =>
                         Async[F].delay(println(s"[WASM Executor] ✅ CRYPTO proof generation succeeded at: $path")) *>
-                          processProof(path.toString)
+                          processProof(path.toString, publicInputs)
                       case Success(Left(error: ZKProofError)) =>
                         Async[F].delay(println(s"[WASM Executor] ❌ CRYPTO ZK proof generation failed: ${error.message}"))
                       case Failure(exception) =>
