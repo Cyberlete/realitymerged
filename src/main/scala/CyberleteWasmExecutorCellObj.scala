@@ -42,7 +42,7 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
   private val zkWasmExecutor = new RealZKWasmExecutor[IO]
 
   // Validator API configuration
-  private val API_ENDPOINT = System.getProperty("validator.api.endpoint", "http://161.35.184.143:5001/api/movement-analysis")
+  private val API_ENDPOINT = System.getProperty("validator.api.endpoint")
   private val CONNECTION_TIMEOUT = 5.seconds
   private val SKIP_API_CALLS = API_ENDPOINT.toLowerCase == "none" || System.getProperty("validator.skip.api", "false").toBoolean
 
