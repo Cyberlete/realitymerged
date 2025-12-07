@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import org.bouncycastle.crypto.digests.SHA256Digest
 import org.reality.combined.{ProofGenerationError, RealZKWasmExecutor, ZKProofError}
-import org.reality.dag.l1.domain.consensus.block.BlockConsensusInput.{ProofBlockWrapper, WasmOutputWrapper, ProofData as BlockConsensusProofData}
+import org.reality.dag.l1.domain.consensus.block.BlockConsensusInput.WasmOutputWrapper
 import org.reality.dag.l1.domain.consensus.block.*
 import org.reality.ext.crypto.*
 import org.reality.kernel.Cell.NullTerminal
@@ -17,7 +17,6 @@ import org.reality.schema.balance.Amount
 import org.reality.schema.netAddress.NETAddress
 import org.reality.schema.transaction.*
 import org.reality.security.SecurityProvider
-import org.reality.security.hash.{Hash, ProofsHash}
 import org.http4s.{Header, Method, Request, Uri}
 import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.circe._
@@ -47,83 +46,14 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
   private val CONNECTION_TIMEOUT = 5.seconds
   private val SKIP_API_CALLS = API_ENDPOINT.toLowerCase == "none" || System.getProperty("validator.skip.api", "false").toBoolean
 
-  // Added for proofs into blocks
-  case class ProofData(
-                        proofPath: String,
-                        metadataPath: String,
-                        commitment: Hash,
-                        timestamp: Long,
-                        verified: Boolean = false
-                      ) {
-    def toBlockConsensusProofData: BlockConsensusProofData =
-      BlockConsensusProofData(
-        proofPath,
-        metadataPath,
-        commitment,
-        timestamp
-      )
-  }
-
-  // Added for proof into blocks helper with a specific return type
-  def extractProofInfo(
-                                proofPath: String,
-                                metadataPath: String,
-                                timestamp: Long,
-                                verified: Boolean = false
-                              ): ProofData = {
-    // Create a SHA256 digest instance
+  // Compute SHA256 hash of proof file content
+  private def computeProofHash(proofPath: String): String = {
     val digest = new SHA256Digest()
-
-    // Read the proof content
     val proofContent = Files.readAllBytes(Paths.get(proofPath))
-
-    // Update the digest with the proof content
     digest.update(proofContent, 0, proofContent.length)
-
-    // Create a buffer for the hash output
-    val hashBytes = new Array[Byte](digest.getDigestSize)
-
-    // Finalize the digest operation
-    digest.doFinal(hashBytes, 0)
-
-    // Convert the hash bytes to a Hash object - explicit casting to avoid type inference issues
-    val commitment = Hash.fromBytes(hashBytes)
-
-    // Create and return a ProofData object
-    ProofData(
-      proofPath = proofPath,
-      metadataPath = metadataPath,
-      commitment = commitment,
-      timestamp = timestamp,
-      verified = verified
-    )
-  }
-
-  // Method to compute a block hash with explicit return type and steps
-  private def computeBlockHash(height: Long, proofs: List[ProofData], timestamp: Long): Hash = {
-    // Create a new digest
-    val digest = new SHA256Digest()
-
-    // Add height to hash
-    val heightBytes = height.toString.getBytes
-    digest.update(heightBytes, 0, heightBytes.length)
-
-    // Add timestamp to hash
-    val timestampBytes = timestamp.toString.getBytes
-    digest.update(timestampBytes, 0, timestampBytes.length)
-
-    // Add all proof commitments to hash
-    proofs.foreach { proof =>
-      digest.update(proof.commitment.value.getBytes, 0, proof.commitment.value.getBytes.length)
-    }
-
-    // Create output buffer and finalize hash
     val hashBytes = new Array[Byte](digest.getDigestSize)
     digest.doFinal(hashBytes, 0)
-
-    // Convert to Hash object and return - clear explicit type
-    val hashObj = Hash.fromBytes(hashBytes)
-    hashObj
+    hashBytes.map("%02x".format(_)).mkString
   }
 
 
@@ -135,98 +65,6 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
 
   def mkCellCyber[F[_]: Async: SecurityProvider](ctx: BlockConsensusContext[F]): Ω => Cell[F, StackF, Ω, Ω, Either[CellError, Ω]] = {
     val zkExecutor = zkWasmExecutor
-    var currentBlockHeight: Long = 0
-    var currentProofs: List[ProofData] = List.empty
-
-    // ENHANCED: Method to verify and process a proof with cryptographic security
-    // Now accepts publicInputs directly since .zkp format doesn't use separate .meta files
-    def processProof(proofPath: String, publicInputs: List[(String, Any)]): F[Unit] = {
-      for {
-        // Log success
-        _ <- Async[F].delay(println(s"[WASM Executor] Proof generated successfully at: $proofPath"))
-
-        // verification with cryptographic verification
-        verificationResult <- Async[F].delay {
-          try {
-            println(s"[WASM Executor] Attempting to verify proof with inputs: $publicInputs")
-            val result = zkWasmExecutor.verifyProof(Paths.get(proofPath), publicInputs).unsafeRunSync()
-            val isValid = result.isRight && result.exists(identity)
-            println(s"[WASM Executor] Raw verification result: $result")
-            isValid
-          } catch {
-            case e: Exception =>
-              println(s"[WASM Executor] Exception during proof verification: ${e.getMessage}")
-              e.printStackTrace()
-              false
-          }
-        }
-
-        // Log verification result
-        _ <- Async[F].delay(println(s"[WASM Executor] proof verification result: $verificationResult"))
-
-        // Create proof info object with verification status
-        proofInfo <- Async[F].delay {
-          extractProofInfo(
-            proofPath,
-            proofPath, // No separate metadata file with .zkp format
-            System.currentTimeMillis(),
-            verified = verificationResult
-          )
-        }
-
-        // Only add verified proofs to the block
-        _ <- Async[F].delay {
-          if (verificationResult) {
-            currentProofs = proofInfo :: currentProofs
-            val verifiedCount = currentProofs.count(_.verified)
-            println(s"[WASM Executor] ✅ proof verified and added to current block: ${proofInfo.commitment}")
-            println(s"[WASM Executor] Current verified proof count: $verifiedCount/10")
-          } else {
-            println(s"[WASM Executor] ❌ proof verification failed, not adding to block: ${proofInfo.commitment}")
-          }
-
-          // Create block if we have enough verified proofs
-          val verifiedProofCount = currentProofs.count(_.verified)
-          if (verifiedProofCount >= 10) {
-            val timestamp = System.currentTimeMillis()
-            val orderedProofs = currentProofs.filter(_.verified).reverse.take(10)
-
-            // Create block hash
-            val blockHash = computeBlockHash(currentBlockHeight, orderedProofs, timestamp)
-
-            // Compute proofs hash
-//            val proofsHashValue = computeProofsHash(orderedProofs)
-
-            // Create block wrapper
-//            val block = ProofBlockWrapper(
-//              height = currentBlockHeight,
-//              hash = blockHash,
-//              proofs = orderedProofs.map(_.toBlockConsensusProofData),
-//              timestamp = timestamp,
-//              proofsHash = ProofsHash(proofsHashValue.value)
-//            )
-
-            // Enhanced log for proofs
-            println(s"""
-                       |[WASM Executor] 🎉 CREATING BLOCK WITH CRYPTOGRAPHIC PROOFS! 🎉
-                       |Height: $currentBlockHeight
-                       |Hash: ${blockHash}
-                       |CRYPTOGRAPHICALLY VERIFIED Proofs included: ${orderedProofs.length}
-                       |Timestamp: $timestamp
-                       |
-                       |🔒 SECURITY GUARANTEE: These proofs are mathematically unforgeable
-                       |🎮 AI/ML VALIDATION: Mouse/keyboard data cryptographically proven
-                       |🤖 BOT DETECTION: AI analysis results are tamper-proof
-                       |=============================================
-                       |""".stripMargin)
-
-            // Update state for next block
-            currentBlockHeight += 1
-            currentProofs = currentProofs.filterNot(p => orderedProofs.contains(p))
-          }
-        }
-      } yield ()
-    }
 
     // Helper to send data to validator API
     def sendToValidatorApi(analysisData: Json): F[Unit] =
@@ -377,9 +215,10 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                       )
                     )
 
+                    // Generate proof
                     proofAttempt <- Async[F].delay {
                       Try {
-                        println(s"[WASM Executor] Generating proof with AI/ML analysis for gaming input data: $publicInputs")
+                        println(s"[WASM Executor] Generating proof for gaming input data: $publicInputs")
                         zkExecutor
                           .generateProof(
                             s"gaming_input_${System.currentTimeMillis()}",
@@ -390,139 +229,81 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                       }
                     }
 
-                    _ <- proofAttempt match {
-                      case Success(Right(path)) =>
-                        Async[F].delay(println(s"[WASM Executor] ✅ CRYPTO proof generation succeeded at: $path")) *>
-                          processProof(path.toString, publicInputs)
+                    // Process proof result and create transaction with hash
+                    result <- proofAttempt match {
+                      case Success(Right(proofPath)) =>
+                        for {
+                          _ <- Async[F].delay(println(s"[WASM Executor] Proof generated at: $proofPath"))
+
+                          // Verify the proof
+                          verificationResult <- Async[F].delay {
+                            try {
+                              val result = zkWasmExecutor.verifyProof(Paths.get(proofPath.toString), publicInputs).unsafeRunSync()
+                              val isValid = result.isRight && result.exists(identity)
+                              println(s"[WASM Executor] Proof verification: $result")
+                              isValid
+                            } catch {
+                              case e: Exception =>
+                                println(s"[WASM Executor] Verification error: ${e.getMessage}")
+                                false
+                            }
+                          }
+
+                          // Compute proof hash and create transaction
+                          finalResult <- if (verificationResult) {
+                            for {
+                              proofHash <- Async[F].delay(computeProofHash(proofPath.toString))
+                              _ <- Async[F].delay(println(s"[WASM Executor] Proof hash: $proofHash"))
+
+                              address <- ctx.selfId.toAddress
+                              destination = Address(NETAddress("NET3k3VihUWMjse9LE93jRqZLEuwGd6a5Ypk4zYS"))
+
+                              // Create transaction with proof hash in binaryHash field
+                              rAppTx = RAppStarkHashTransaction(
+                                source = address,
+                                destination = destination,
+                                binaryHash = proofHash,
+                                starkProof = "",
+                                fee = TransactionFee.zero,
+                                amount = TransactionAmount(Amount(0L)),
+                                parent = TransactionReference.empty,
+                                salt = TransactionSalt(System.currentTimeMillis())
+                              )
+
+                              signedRAppTx <- rAppTx.sign(ctx.keyPair)
+                              hashedSignedRAppTx <- signedRAppTx.toHashed
+                              validationResult <- ctx.transactionValidator.validate(signedRAppTx)
+                              _ <- ctx.transactionStorage.put(hashedSignedRAppTx)
+                              _ <- Async[F].delay {
+                                println(s"[WASM Executor] Transaction validation: $validationResult")
+                                println(s"[WASM Executor] Proof hash recorded on-chain: $proofHash")
+                              }
+                            } yield Right(NullTerminal): Either[CellError, Ω]
+                          } else {
+                            Async[F].delay(println("[WASM Executor] Proof verification failed - not recording")) *>
+                              Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
+                          }
+                        } yield finalResult
+
                       case Success(Left(error: ZKProofError)) =>
-                        Async[F].delay(println(s"[WASM Executor] ❌ CRYPTO ZK proof generation failed: ${error.message}"))
+                        Async[F].delay(println(s"[WASM Executor] Proof generation failed: ${error.message}")) *>
+                          Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
+
                       case Failure(exception) =>
-                        val proofError = ProofGenerationError(exception.getMessage)
-                        Async[F].delay(println(s"[WASM Executor] ❌ Unexpected error during proof generation: ${proofError.message}"))
+                        Async[F].delay(println(s"[WASM Executor] Unexpected error: ${exception.getMessage}")) *>
+                          Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
                     }
-
-
-                    _ <- Async[F].delay(println("[WASM Executor] Processing WASM output with CRYPTO proofs"))
-
-                    // Process proofs when enough verified proofs are collected
-                    _ <- Async[F].delay {
-                      val verifiedProofCount = currentProofs.count(_.verified)
-                      if (verifiedProofCount >= 10) {
-                        val currentTime = System.currentTimeMillis()
-                        val orderedProofs = currentProofs.filter(_.verified).reverse.take(10)
-                        val newBlockHash = computeBlockHash(currentBlockHeight, orderedProofs, currentTime)
-                        val proofsHashValue = computeProofsHash(orderedProofs)
-
-                        val block = ProofBlockWrapper(
-                          currentBlockHeight,
-                          newBlockHash,
-                          orderedProofs.map(_.toBlockConsensusProofData),
-                          currentTime,
-                          ProofsHash(proofsHashValue.value)
-                        )
-
-                        // Process the block with proofs
-                        println(s"[WASM Executor] Processing block with CRYPTOGRAPHIC proofs: ${block.hash}")
-
-                        // Update state after successful processing
-                        currentBlockHeight += 1
-                        currentProofs = currentProofs.filterNot(p => orderedProofs.contains(p))
-                        println(s"[WASM Executor] Block created with CRYPTO security at height $currentBlockHeight")
-                      }
-                    }
-
-                    address <- ctx.selfId.toAddress
-                    destination = Address(NETAddress("NET3k3VihUWMjse9LE93jRqZLEuwGd6a5Ypk4zYS"))
-                    rAppTx : RAppStarkHashTransaction = RAppStarkHashTransaction(address, destination, "", "",
-                      TransactionFee.zero, TransactionAmount(Amount(1L)), TransactionReference.empty,
-                      TransactionSalt(1L))
-                    signedRAppTx <- rAppTx.sign(ctx.keyPair)
-                    hashedSignedRAppTx <- signedRAppTx.toHashed
-                    validationResult <- ctx.transactionValidator.validate(signedRAppTx)
-                    _ <- ctx.transactionStorage.put(hashedSignedRAppTx)
-                    _ <- Async[F].delay {
-                      println(s"rAppTx validation result: $validationResult")
-                      println(s"recived rAppTx $rAppTx")
-                      println(s"recived signedRAppTx $signedRAppTx")
-                      println(s"recived hashedSignedRAppTx $signedRAppTx")
-                    }
-
-                    finalResult <- Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
-
-
-//                    finalResult <- F.pure(Right(AlgebraCommand.ProcessWasmOutput): Either[CellError, Ω])
-                  } yield finalResult
+                  } yield result
 
                 case _ =>
                   Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
               }
             case Done(other) =>
               other match {
-//                case Right(AlgebraCommand.NoAction) =>
-//                  Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
-//
-//                case Right(cmd: AlgebraCommand) =>
-//                  cmd match {
-//                    case AlgebraCommand.ProcessWasmOutput(_) =>
-//                      for {
-//                        _ <- Async[F].delay(println("[WASM Executor] Processing WASM output with CRYPTO proofs"))
-//
-//                        // Process proofs when enough verified proofs are collected
-//                        _ <- Async[F].delay {
-//                          val verifiedProofCount = currentProofs.count(_.verified)
-//                          if (verifiedProofCount >= 10) {
-//                            val currentTime = System.currentTimeMillis()
-//                            val orderedProofs = currentProofs.filter(_.verified).reverse.take(10)
-//                            val newBlockHash = computeBlockHash(currentBlockHeight, orderedProofs, currentTime)
-//                            val proofsHashValue = computeProofsHash(orderedProofs)
-//
-//                            val block = ProofBlockWrapper(
-//                              currentBlockHeight,
-//                              newBlockHash,
-//                              orderedProofs.map(_.toBlockConsensusProofData),
-//                              currentTime,
-//                              ProofsHash(proofsHashValue.value)
-//                            )
-//
-//                            // Process the block with proofs
-//                            println(s"[WASM Executor] Processing block with CRYPTOGRAPHIC proofs: ${block.hash}")
-//
-//                            // Update state after successful processing
-//                            currentBlockHeight += 1
-//                            currentProofs = currentProofs.filterNot(p => orderedProofs.contains(p))
-//                            println(s"[WASM Executor] Block created with CRYPTO security at height $currentBlockHeight")
-//                          }
-//                        }
-//
-//                        address <- ctx.selfId.toAddress
-//                        rAppTx: RAppStarkHashTransaction = RAppStarkHashTransaction(address, address, "", "",
-//                          TransactionFee(NonNegLong.MinValue), TransactionAmount(NonNegLong(1L)), TransactionReference.empty,
-//                          TransactionSalt(1L))
-//                        signedRAppTx <- rAppTx.sign(ctx.keyPair)
-//                        hashedSignedRAppTx <- signedRAppTx.toHashed
-//
-//                        validationResult <- ctx.transactionValidator.validate(signedRAppTx)
-//
-//                        _ <- ctx.transactionStorage.put(hashedSignedRAppTx) //.onError(_ -> )
-//                        _ <- Async[F].delay {
-//                          println(s"rAppTx validation result: $validationResult")
-//                          println(s"recieved rAppTx $rAppTx")
-//                          println(s"recieved signedRAppTx $signedRAppTx")
-//                          println(s"recieved hashedSignedRAppTx $signedRAppTx")
-//                        }
-//
-//                        finalResult <- Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
-//                      } yield finalResult
-//
-//                    case _ => Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
-//                  }
-
                 case Right(_) =>
-                  // Handle any other Right value that's not an AlgebraCommand
                   Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
-
                 case Left(error) =>
-                  Async[F].delay(println(s"[WASM Executor] Error during execution: ${error.toString}")) *>
+                  Async[F].delay(println(s"[WASM Executor] Error: ${error.toString}")) *>
                     Async[F].pure(Left(error))
               }
           },
@@ -546,19 +327,7 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
     }
   }
 
-  def extractEventData(event: Json): Map[String, Any] = {
-    val x = event.hcursor.downField("x_position").as[Double].getOrElse(0.0)
-    val y = event.hcursor.downField("y_position").as[Double].getOrElse(0.0)
-    val timestamp = event.hcursor.downField("timestamp").as[Long].getOrElse(0L)
-
-    Map[String, Any](
-      "x_position" -> x,
-      "y_position" -> y,
-      "timestamp" -> timestamp
-    )
-  }
-
-  // event extraction with error handling - now for gaming input data
+  // Extract gaming input events from JSON
   private def extractEvents(json: Json): Vector[Json] =
     try {
       val events = json.hcursor
@@ -569,30 +338,11 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
         .flatMap(_.asArray)
         .getOrElse(Vector.empty)
 
-      println(s"[WASM Executor] Successfully extracted ${events.size} gaming input events from JSON")
+      println(s"[WASM Executor] Extracted ${events.size} gaming input events")
       events
     } catch {
       case e: Exception =>
-        println(s"[WASM Executor] Error extracting gaming input events from JSON: ${e.getMessage}")
+        println(s"[WASM Executor] Error extracting events: ${e.getMessage}")
         Vector.empty
     }
-
-  // Calculate hash of all proofs in a block with explicit steps
-  def computeProofsHash(proofs: List[ProofData]): Hash = {
-    // Create new digest instance
-    val digest = new SHA256Digest()
-
-    // Update digest with each proof commitment
-    proofs.foreach { proof =>
-      val commitmentBytes = proof.commitment.value.getBytes
-      digest.update(commitmentBytes, 0, commitmentBytes.length)
-    }
-
-    // Generate final hash
-    val hashBytes = new Array[Byte](digest.getDigestSize)
-    digest.doFinal(hashBytes, 0)
-
-    // Create and return Hash object
-    Hash.fromBytes(hashBytes)
-  }
 }

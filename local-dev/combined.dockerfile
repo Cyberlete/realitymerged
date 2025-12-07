@@ -20,14 +20,14 @@ ENV LOCALHOST=0.0.0.0
 WORKDIR /app
 
 COPY kubernetes/data/ keys/
-COPY target/scala-2.13/cyberApp-assembly*.jar combined.jar
-COPY movement.wasm movement.wasm
+COPY target/scala-3.7.3/cyberApp-assembly*.jar combined.jar
+COPY wasm/movement.wasm /app/movement.wasm
 #reality-combined-assembly-0.0.0+1036-30bff128+20250505-1208.jar
 RUN cat <<EOF > start.sh
 
 set -x
 
-export DOCKER_HOST=\$(hostname -i)
+export DOCKER_HOST=\$(hostname -i 2>/dev/null || hostname -I 2>/dev/null | awk '{print \$1}' || echo "0.0.0.0")
 # export DOCKER_HOST=172.25.0.2
 if [ "\$NODE_COMMAND" = "run-genesis" ]
 then
