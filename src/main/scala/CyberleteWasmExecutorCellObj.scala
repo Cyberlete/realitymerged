@@ -69,11 +69,11 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
     // Helper to send data to validator API
     def sendToValidatorApi(analysisData: Json): F[Unit] =
       if (SKIP_API_CALLS) {
-        Async[F].delay(println(s"[WASM Executor] API calls disabled - skipping validation API call"))
+        Async[F].delay(println(s"[STARK] API calls disabled - skipping validation API call"))
       } else {
         Uri.fromString(API_ENDPOINT) match {
           case Left(parseError) =>
-            Async[F].delay(println(s"[WASM Executor] Invalid API endpoint URI: $parseError"))
+            Async[F].delay(println(s"[STARK] Invalid API endpoint URI: $parseError"))
           case Right(uri) =>
             val request = Request[F](Method.POST, uri)
               .withEntity(analysisData)
@@ -87,13 +87,11 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                     body <- response.as[String]
                     endTime <- Async[F].delay(System.currentTimeMillis())
                     _ <- Async[F].delay {
-                      println(s"[WASM Executor] Response received in ${endTime - startTime}ms, status: ${response.status.code}")
+                      println(s"[STARK] Validator response in ${endTime - startTime}ms, status: ${response.status.code}")
                       if (response.status.isSuccess) {
-                        println(s"[WASM Executor] Successfully sent data to validator")
-                        println(s"[WASM Executor] Response body: $body")
+                        println(s"[STARK] Successfully sent STARK proof data to validator")
                       } else {
-                        println(s"[WASM Executor] Failed to send data: ${response.status.reason}")
-                        println(s"[WASM Executor] Error response: $body")
+                        println(s"[STARK] Failed to send data: ${response.status.reason}")
                       }
                     }
                   } yield ()
@@ -103,14 +101,12 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
               Async[F].delay {
                 error match {
                   case e: ConnectException =>
-                    println(s"[WASM Executor] CONNECTION ERROR: ${e.getMessage}")
-                    println(s"[WASM Executor] Continuing without validation API")
+                    println(s"[STARK] CONNECTION ERROR: ${e.getMessage}")
+                    println(s"[STARK] Continuing without validation API")
                   case e: SocketTimeoutException =>
-                    println(s"[WASM Executor] TIMEOUT ERROR (${CONNECTION_TIMEOUT}): ${e.getMessage}")
-                    println(s"[WASM Executor] Consider checking network or increasing timeout")
+                    println(s"[STARK] TIMEOUT ERROR (${CONNECTION_TIMEOUT}): ${e.getMessage}")
                   case e: Throwable =>
-                    println(s"[WASM Executor] UNEXPECTED ERROR: ${e.getClass.getName}: ${e.getMessage}")
-                    e.printStackTrace()
+                    println(s"[STARK] UNEXPECTED ERROR: ${e.getClass.getName}: ${e.getMessage}")
                 }
               }
             }
@@ -127,12 +123,12 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
               cmd match {
                 case AlgebraCommand.ProcessWasmOutput(wrapper) =>
                   for {
-                    _ <- Async[F].delay(println("[WASM Executor] Starting ZK-powered WASM output processing"))
+                    _ <- Async[F].delay(println("[STARK] Starting STARK proof generation for WASM output"))
 
                     // event extraction with logging
                     events = extractEvents(wrapper.output.request.data.asJson)
                     eventCount = events.size
-                    _ <- Async[F].delay(println(s"[WASM Executor] Extracted $eventCount gaming input events for proof"))
+                    _ <- Async[F].delay(println(s"[STARK] Extracted $eventCount gaming input events for STARK proof"))
 
                     privyId = wrapper.output.request.data.asJson.hcursor
                       .downField("value")
@@ -165,13 +161,13 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
 
                     userId = privyId.getOrElse(wrapper.output.request.data.proofs.head.id.hex.toString)
 
-                    _ <- Async[F].delay(println(s"[WASM Executor] Processing proof for user ID: $userId (Game: $gameId)"))
+                    _ <- Async[F].delay(println(s"[STARK] Processing STARK proof for user ID: $userId (Game: $gameId)"))
 
                     // Prepare analysis data for validator API - enhanced for crypto proofs
                     analysisData <- Async[F].delay(
                       Json.obj(
                         "analysisData" -> Json.obj(
-                          "zkProofType" -> Json.fromString("REAL_CRYPTOGRAPHIC_PROOF"),
+                          "zkProofType" -> Json.fromString("STARK_PROOF"),
                           "securityLevel" -> Json.fromString("PRODUCTION_GRADE"),
                           "wasmAnalysis" -> wrapper.output.asJson.hcursor
                             .downField("result")
@@ -211,14 +207,14 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                     // logging message for proof
                     _ <- Async[F].delay(
                       println(
-                        s"[WASM Executor] Processing $eventCount gaming input events for proof generation with inputs: $publicInputs"
+                        s"[STARK] Generating STARK proof for $eventCount events with inputs: $publicInputs"
                       )
                     )
 
-                    // Generate proof
+                    // Generate STARK proof
                     proofAttempt <- Async[F].delay {
                       Try {
-                        println(s"[WASM Executor] Generating proof for gaming input data: $publicInputs")
+                        println(s"[STARK] Invoking StarkProver for gaming input data: $publicInputs")
                         zkExecutor
                           .generateProof(
                             s"gaming_input_${System.currentTimeMillis()}",
@@ -229,22 +225,22 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                       }
                     }
 
-                    // Process proof result and create transaction with hash
+                    // Process STARK proof result and create transaction with hash
                     result <- proofAttempt match {
                       case Success(Right(proofPath)) =>
                         for {
-                          _ <- Async[F].delay(println(s"[WASM Executor] Proof generated at: $proofPath"))
+                          _ <- Async[F].delay(println(s"[STARK] Proof generated at: $proofPath"))
 
-                          // Verify the proof
+                          // Verify the STARK proof
                           verificationResult <- Async[F].delay {
                             try {
                               val result = zkWasmExecutor.verifyProof(Paths.get(proofPath.toString), publicInputs).unsafeRunSync()
                               val isValid = result.isRight && result.exists(identity)
-                              println(s"[WASM Executor] Proof verification: $result")
+                              println(s"[STARK] Proof verification: $result")
                               isValid
                             } catch {
                               case e: Exception =>
-                                println(s"[WASM Executor] Verification error: ${e.getMessage}")
+                                println(s"[STARK] Verification error: ${e.getMessage}")
                                 false
                             }
                           }
@@ -253,12 +249,12 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                           finalResult <- if (verificationResult) {
                             for {
                               proofHash <- Async[F].delay(computeProofHash(proofPath.toString))
-                              _ <- Async[F].delay(println(s"[WASM Executor] Proof hash: $proofHash"))
+                              _ <- Async[F].delay(println(s"[STARK] Proof hash (SHA-256): $proofHash"))
 
                               address <- ctx.selfId.toAddress
                               destination = Address(NETAddress("NET3k3VihUWMjse9LE93jRqZLEuwGd6a5Ypk4zYS"))
 
-                              // Create transaction with proof hash in binaryHash field
+                              // Create transaction with STARK proof hash in binaryHash field
                               rAppTx = RAppStarkHashTransaction(
                                 source = address,
                                 destination = destination,
@@ -275,22 +271,22 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                               validationResult <- ctx.transactionValidator.validate(signedRAppTx)
                               _ <- ctx.transactionStorage.put(hashedSignedRAppTx)
                               _ <- Async[F].delay {
-                                println(s"[WASM Executor] Transaction validation: $validationResult")
-                                println(s"[WASM Executor] Proof hash recorded on-chain: $proofHash")
+                                println(s"[STARK] Transaction validation: $validationResult")
+                                println(s"[STARK] STARK proof hash recorded on-chain: $proofHash")
                               }
                             } yield Right(NullTerminal): Either[CellError, Ω]
                           } else {
-                            Async[F].delay(println("[WASM Executor] Proof verification failed - not recording")) *>
+                            Async[F].delay(println("[STARK] Proof verification failed - not recording on-chain")) *>
                               Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
                           }
                         } yield finalResult
 
                       case Success(Left(error: ZKProofError)) =>
-                        Async[F].delay(println(s"[WASM Executor] Proof generation failed: ${error.message}")) *>
+                        Async[F].delay(println(s"[STARK] Proof generation failed: ${error.message}")) *>
                           Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
 
                       case Failure(exception) =>
-                        Async[F].delay(println(s"[WASM Executor] Unexpected error: ${exception.getMessage}")) *>
+                        Async[F].delay(println(s"[STARK] Unexpected error: ${exception.getMessage}")) *>
                           Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
                     }
                   } yield result
@@ -303,7 +299,7 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                 case Right(_) =>
                   Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
                 case Left(error) =>
-                  Async[F].delay(println(s"[WASM Executor] Error: ${error.toString}")) *>
+                  Async[F].delay(println(s"[STARK] Error: ${error.toString}")) *>
                     Async[F].pure(Left(error))
               }
           },
@@ -338,11 +334,11 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
         .flatMap(_.asArray)
         .getOrElse(Vector.empty)
 
-      println(s"[WASM Executor] Extracted ${events.size} gaming input events")
+      println(s"[STARK] Extracted ${events.size} gaming input events")
       events
     } catch {
       case e: Exception =>
-        println(s"[WASM Executor] Error extracting events: ${e.getMessage}")
+        println(s"[STARK] Error extracting events: ${e.getMessage}")
         Vector.empty
     }
 }
