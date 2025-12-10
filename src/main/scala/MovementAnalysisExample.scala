@@ -1,9 +1,9 @@
 import java.nio.{ByteBuffer, ByteOrder}
 import cats.effect.IO
 import cats.implicits.toTraverseOps
-import org.reality.combined.*
+import org.reality.combined._
 import org.reality.dag.l1.WasmExecutionParams
-import io.circe.generic.auto.*
+import io.circe.generic.auto._
 import org.reality.combined.examples.CombinedL0
 import io.circe.{Decoder, Encoder, Json}
 import io.github.kawamuray.wasmtime.Val
@@ -47,22 +47,35 @@ object MovementAnalysisExample extends Portal {
     flags
   }
 
+  // Maximum events per request to prevent memory exhaustion
+  private val MaxEventsPerRequest = 10000
+
   val wasmProgram: WasmExecutionParams[MovementParams, MovementAnalysis] = WasmExecutionParams(
     wasmPath = "movement.wasm",
     functionName = "exported_analyze_points_wasm",
     paramsConverter = { case params: MovementParams =>
       val eventCount = params.events.length
+
+      // Validate event count to prevent OOM
+      require(eventCount > 0 && eventCount <= MaxEventsPerRequest,
+        s"Event count must be between 1 and $MaxEventsPerRequest, got $eventCount")
+
       val totalSize = eventCount * 32 // 32 bytes per event
 
-      val buffer = ByteBuffer.allocateDirect(totalSize)
-      buffer.order(ByteOrder.LITTLE_ENDIAN)
+      // Use DirectBufferUtils for proper allocation with size limits and cleanup
+      val buffer = DirectBufferUtils.allocate(totalSize, ByteOrder.LITTLE_ENDIAN)
 
-      params.events.foreach { event =>
-        buffer.putFloat(event.x_position)
-        buffer.putFloat(event.y_position)
-        buffer.putLong(event.timestamp)
-        buffer.putInt(convertButtonsToFlags(event))
-        buffer.position(buffer.position() + 12) // Padding to 32 bytes
+      try {
+        params.events.foreach { event =>
+          buffer.putFloat(event.x_position)
+          buffer.putFloat(event.y_position)
+          buffer.putLong(event.timestamp)
+          buffer.putInt(convertButtonsToFlags(event))
+          buffer.position(buffer.position() + 12) // Padding to 32 bytes
+        }
+      } finally {
+        // Clean up buffer after use to prevent off-heap memory leak
+        DirectBufferUtils.cleanBuffer(buffer)
       }
 
       Array(Val.fromI32(0), Val.fromI32(eventCount))

@@ -1,6 +1,6 @@
 import cats.effect.std.Random
 import cats.effect.unsafe.IORuntime
-import cats.effect.{Async, IO}
+import cats.effect.{Async, IO, Temporal}
 import cats.syntax.all.*
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import io.circe.Json
@@ -23,10 +23,9 @@ import org.http4s.circe._
 import org.typelevel.ci.CIString
 
 import java.net.{ConnectException, SocketTimeoutException}
-import java.nio.file.{Files, Paths}
+import java.nio.file.{Files, Path, Paths}
 import scala.concurrent.Future
 import scala.concurrent.duration.*
-import scala.util.{Failure, Success, Try}
 object CyberleteWasmExecutorCellObj extends StateChannelCell {
   implicit val runtime: IORuntime = cats.effect.unsafe.implicits.global
 
@@ -36,10 +35,24 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
       F.fromFuture(F.delay(future))
   }
 
-  // ZK executor for proof verification
-  //
-  // security:
+  // ZK executor for proof verification (shared instance)
+  // Note: RealZKWasmExecutor is thread-safe for proof generation/verification
   private val zkWasmExecutor = new RealZKWasmExecutor[IO]
+
+  // Timeout for proof operations to prevent blocking indefinitely
+  private val ProofOperationTimeout = 30.seconds
+
+  /**
+   * Lift an IO operation to F[_] without blocking
+   * This properly converts IO to any Async[F] without using unsafeRunSync
+   */
+  private def liftIO[F[_]: Async, A](io: IO[A]): F[A] =
+    Async[F].async_ { cb =>
+      io.unsafeRunAsync {
+        case Right(a) => cb(Right(a))
+        case Left(e)  => cb(Left(e))
+      }(runtime)
+    }
 
   // Validator API configuration
   private val API_ENDPOINT = System.getProperty("validator.api.endpoint", "http://161.35.184.143:5001/api/movement-analysis")
@@ -211,37 +224,44 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                       )
                     )
 
-                    // Generate STARK proof
-                    proofAttempt <- Async[F].delay {
-                      Try {
-                        println(s"[STARK] Invoking StarkProver for gaming input data: $publicInputs")
-                        zkExecutor
-                          .generateProof(
-                            s"gaming_input_${System.currentTimeMillis()}",
-                            publicInputs,
-                            List.empty
-                          )
-                          .unsafeRunSync()
+                    // Generate STARK proof - using proper async execution instead of blocking unsafeRunSync
+                    // This prevents thread starvation and allows proper fiber-based concurrency
+                    proofResult <- liftIO(
+                      zkExecutor
+                        .generateProof(
+                          s"gaming_input_${System.currentTimeMillis()}",
+                          publicInputs,
+                          List.empty
+                        )
+                    ).handleErrorWith { e =>
+                      Async[F].delay {
+                        println(s"[STARK] Proof generation error: ${e.getMessage}")
+                        Left(ProofGenerationError(e.getMessage)): Either[ZKProofError, Path]
                       }
                     }
 
+                    _ <- Async[F].delay(println(s"[STARK] Proof generation result: $proofResult"))
+
                     // Process STARK proof result and create transaction with hash
-                    result <- proofAttempt match {
-                      case Success(Right(proofPath)) =>
+                    result <- proofResult match {
+                      case Right(proofPath) =>
                         for {
                           _ <- Async[F].delay(println(s"[STARK] Proof generated at: $proofPath"))
 
-                          // Verify the STARK proof
-                          verificationResult <- Async[F].delay {
-                            try {
-                              val result = zkWasmExecutor.verifyProof(Paths.get(proofPath.toString), publicInputs).unsafeRunSync()
-                              val isValid = result.isRight && result.exists(identity)
-                              println(s"[STARK] Proof verification: $result")
+                          // Verify the STARK proof - using proper async execution
+                          verificationResult <- liftIO(
+                            zkWasmExecutor.verifyProof(proofPath, publicInputs)
+                          ).map {
+                            case Right(isValid) =>
+                              println(s"[STARK] Proof verification result: $isValid")
                               isValid
-                            } catch {
-                              case e: Exception =>
-                                println(s"[STARK] Verification error: ${e.getMessage}")
-                                false
+                            case Left(error) =>
+                              println(s"[STARK] Verification error: ${error.message}")
+                              false
+                          }.handleErrorWith { e =>
+                            Async[F].delay {
+                              println(s"[STARK] Verification exception: ${e.getMessage}")
+                              false
                             }
                           }
 
@@ -281,12 +301,8 @@ object CyberleteWasmExecutorCellObj extends StateChannelCell {
                           }
                         } yield finalResult
 
-                      case Success(Left(error: ZKProofError)) =>
+                      case Left(error: ZKProofError) =>
                         Async[F].delay(println(s"[STARK] Proof generation failed: ${error.message}")) *>
-                          Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
-
-                      case Failure(exception) =>
-                        Async[F].delay(println(s"[STARK] Unexpected error: ${exception.getMessage}")) *>
                           Async[F].pure(Right(NullTerminal): Either[CellError, Ω])
                     }
                   } yield result

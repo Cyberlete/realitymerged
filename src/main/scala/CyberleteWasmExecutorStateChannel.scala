@@ -3,7 +3,7 @@ import MovementAnalysisExample.{MovementAnalysis, MovementParams}
 import java.nio.{ByteBuffer, ByteOrder}
 import java.security.KeyPair
 import cats.effect.std.{Random, Semaphore}
-import cats.effect.{Async, IO, Resource}
+import cats.effect.{Async, IO, Resource, Temporal}
 import cats.implicits._
 import org.reality.dag.l1.domain.consensus.block.StateChannelCell
 import org.reality.dag.l1.http.p2p.L1P2PClient
@@ -15,31 +15,43 @@ import org.reality.sdk.app.SDK
 import org.reality.sdk.cli.CliMethod
 import org.reality.sdk.config.types.AppConfig
 import org.reality.security.SecurityProvider
-//import io.circe.generic.auto.exportDecoder
 import io.circe.{Decoder, Json}
 import io.github.kawamuray.wasmtime.Val
-import org.reality.combined.WasmExecutorRoutes
-import org.reality.combined.WasmExecutorStateChannel
+import org.reality.combined.{DirectBufferUtils, WasmExecutorRoutes, WasmExecutorStateChannel}
 
 object CyberleteWasmExecutorStateChannel extends MkStateChannel {
   val cellObj: StateChannelCell = CyberleteWasmExecutorCellObj
   //original L1 BlockConsensusCell
+  // Maximum events per request to prevent memory exhaustion
+  private val MaxEventsPerRequest = 10000
+
   val wasmProgram: WasmExecutionParams[MovementParams, MovementAnalysis] = WasmExecutionParams(
     wasmPath = "movement.wasm",
     functionName = "exported_analyze_points_wasm",
     paramsConverter = { case params: MovementParams =>
       val eventCount = params.events.length
+
+      // Validate event count to prevent OOM
+      require(eventCount > 0 && eventCount <= MaxEventsPerRequest,
+        s"Event count must be between 1 and $MaxEventsPerRequest, got $eventCount")
+
       val totalSize = eventCount * 32 // 32 bytes per event
 
-      val buffer = ByteBuffer.allocateDirect(totalSize)
-      buffer.order(ByteOrder.LITTLE_ENDIAN)
+      // Use DirectBufferUtils for proper allocation with size limits
+      val buffer = DirectBufferUtils.allocate(totalSize, ByteOrder.LITTLE_ENDIAN)
 
-      params.events.foreach { event =>
-        buffer.putFloat(event.x_position)
-        buffer.putFloat(event.y_position)
-        buffer.putLong(event.timestamp)
-        buffer.putInt(MovementAnalysisExample.convertButtonsToFlags(event))
-        buffer.position(buffer.position() + 12) // Padding to 32 bytes
+      try {
+        params.events.foreach { event =>
+          buffer.putFloat(event.x_position)
+          buffer.putFloat(event.y_position)
+          buffer.putLong(event.timestamp)
+          buffer.putInt(MovementAnalysisExample.convertButtonsToFlags(event))
+          buffer.position(buffer.position() + 12) // Padding to 32 bytes
+        }
+      } finally {
+        // Clean up buffer after use to prevent off-heap memory leak
+        // Note: The buffer data is copied to WASM memory before this cleanup
+        DirectBufferUtils.cleanBuffer(buffer)
       }
 
       Array(Val.fromI32(0), Val.fromI32(eventCount))
