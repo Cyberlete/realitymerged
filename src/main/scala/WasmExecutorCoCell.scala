@@ -1,6 +1,7 @@
 import cats.effect.IO
 import org.reality.combined.CoCell
 import org.reality.dag.l1.WasmExecutionParams
+import org.reality.modules.HttpApi
 import org.reality.sdk.app.SDK
 
 case class WasmExecutorCoCell[T, R](wasmProgram: WasmExecutionParams[T, R]) extends CoCell {
@@ -20,6 +21,8 @@ case class WasmExecutorCoCell[T, R](wasmProgram: WasmExecutionParams[T, R]) exte
       this,
       argsToStartUp(args).l1method,
       org.reality.dag.l1.cli.method.opts,
-      CyberleteWasmExecutorStateChannel.mkApi[org.reality.dag.l1.cli.Run]
+      // mkApi returns (L1HttpApi, Validators) tuple - extract HttpApi (L1HttpApi extends HttpApi)
+      (method: org.reality.dag.l1.cli.Run, sdk: SDK[IO]) =>
+        CyberleteWasmExecutorStateChannel.mkApi[org.reality.dag.l1.cli.Run](method, sdk).map(_._1: HttpApi[IO])
     )
 }
